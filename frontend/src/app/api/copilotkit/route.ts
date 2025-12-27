@@ -43,8 +43,8 @@ export const POST = async (req: NextRequest) => {
     method: req.method,
     headers: headers,
     body: req.body,
-    duplex: "half",
-  } as RequestInit & { duplex: string });
+    duplex: "half" as const,
+  });
 
   const runtime = createRuntime(authHeader);
   

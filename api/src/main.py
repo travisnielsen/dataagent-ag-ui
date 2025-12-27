@@ -5,11 +5,11 @@ import logging
 from contextlib import asynccontextmanager
 
 import uvicorn
-#from azure.identity.aio import DefaultAzureCredential
 from azure.identity import DefaultAzureCredential
+from azure.identity.aio import DefaultAzureCredential as AsyncDefaultAzureCredential
 from agent_framework._clients import ChatClientProtocol
 from agent_framework.azure._chat_client import AzureOpenAIChatClient
-# from agent_framework.azure import AzureAIAgentClient # type: ignore
+from agent_framework.azure import AzureAIAgentClient # type: ignore
 from agent_framework.openai import OpenAIChatClient
 from agent_framework_ag_ui import add_agent_framework_fastapi_endpoint
 from dotenv import load_dotenv
@@ -27,19 +27,45 @@ logger = logging.getLogger(__name__)
 AUTH_ENABLED = bool(azure_ad_settings.AZURE_AD_CLIENT_ID and azure_ad_settings.AZURE_AD_TENANT_ID)
 
 def _build_chat_client() -> ChatClientProtocol:
+    """
+    Build the appropriate chat client based on environment configuration.
+    
+    Set USE_FOUNDRY_AGENT=true to use AzureAIAgentClient (enables Foundry integration, threads).
+    Otherwise, uses AzureOpenAIChatClient (stateless, no Foundry integration).
+    """
+    use_foundry = os.getenv("USE_FOUNDRY_AGENT", "false").lower() == "true"
+    
     try:
-        if bool(os.getenv("AZURE_OPENAI_ENDPOINT")):
-            # Azure OpenAI setup - uses environment variables by default
-            # Optionally can pass deployment_name explicitly
+        if use_foundry and os.getenv("AZURE_AI_PROJECT_ENDPOINT"):
+            # Azure AI Foundry Agent - enables thread management and Foundry visibility
+            # Uses async credential for async operations
+            # 
+            # NOTE: AzureAIAgentClient creates a new Foundry thread for each request
+            # when no thread_id is provided. For stateless operation (like AG-UI where
+            # thread state is managed by the protocol), we need AzureOpenAIChatClient.
+            # The AzureAIAgentClient is meant for scenarios where you want Foundry's
+            # built-in thread management.
+            # see: https://github.com/microsoft/agent-framework/issues/2479
+            logger.warning(
+                "AzureAIAgentClient creates new Foundry threads per request. "
+                "For stateless AG-UI operation, consider using AzureOpenAIChatClient instead."
+            )
+            return AzureAIAgentClient(
+                credential=AsyncDefaultAzureCredential(),
+                project_endpoint=os.getenv("AZURE_AI_PROJECT_ENDPOINT"),
+                model_deployment_name=os.getenv("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4o-mini"),
+            )
+        elif bool(os.getenv("AZURE_OPENAI_ENDPOINT")):
+            # Azure OpenAI Chat - stateless, no Foundry integration
+            # Uses sync credential
+            logger.info("Using AzureOpenAIChatClient (stateless mode)")
             return AzureOpenAIChatClient(
                 credential=DefaultAzureCredential(),
-                # deployment_name=deployment_name,
-                # endpoint=os.getenv("AZURE_OPENAI_PROJECT_ENDPOINT"),
                 endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
                 deployment_name=os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME", "gpt-4o-mini"),
             )
 
-        raise ValueError("Either AZURE_OPENAI_ENDPOINT or OPENAI_API_KEY environment variable is required")
+        raise ValueError("Either AZURE_OPENAI_PROJECT_ENDPOINT or AZURE_OPENAI_ENDPOINT environment variable is required")
 
     except Exception as exc:  # pragma: no cover
         raise RuntimeError(
