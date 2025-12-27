@@ -9,4 +9,5 @@ dependencies = [
     "agent-framework-azure-ai",
     "agent-framework-core>=1.0.0b251223",
     "python-dotenv",
+    "fastapi-azure-auth>=5.0.0",
 ]

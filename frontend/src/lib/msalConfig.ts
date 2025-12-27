@@ -50,6 +50,19 @@ export const loginRequest = {
   scopes: ["User.Read"],
 };
 
+// Scopes for calling the backend API
+// Option 1: If you've exposed an API scope in Azure Portal, use:
+//   `api://${clientId}/access_as_user`
+// Option 2: If you haven't set up API scopes, use the client ID directly
+//   which will return an access token for the application itself
+export const apiRequest = {
+  scopes: [
+    // Use openid and profile to get a proper JWT access token
+    // If you've exposed API scopes, add them here
+    `api://${process.env.NEXT_PUBLIC_AZURE_AD_CLIENT_ID}/access_as_user`,
+  ],
+};
+
 // Scopes for Microsoft Graph API calls
 export const graphConfig = {
   graphMeEndpoint: "https://graph.microsoft.com/v1.0/me",

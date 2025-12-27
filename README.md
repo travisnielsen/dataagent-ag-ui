@@ -1,10 +1,10 @@
-# CopilotKit <> Microsoft Agent Framework (Python)
+# Enterprise Data Agent
 
 This is a sample repository that demonstrates exploration of structured and unstructured data using and agentic architecture based on [Microsoft Agent Framework](https://aka.ms/agent-framework). It leverages [CopilotKit](https://www.copilotkit.ai/) for the core user experience. The code used in this sample was originated from [this template](https://github.com/CopilotKit/with-microsoft-agent-framework-python) created by the CopilotKit team.
 
 ## Prerequisites
 
-- OpenAI or Azure OpenAI credentials (for the Microsoft Agent Framework agent)
+- Azure OpenAI credentials (for the Microsoft Agent Framework agent)
 - Python 3.12+
 - uv
 - Node.js 20+ 
@@ -14,11 +14,17 @@ This is a sample repository that demonstrates exploration of structured and unst
   - yarn
   - bun
 
-> **Note:** This repository ignores lock files (package-lock.json, yarn.lock, pnpm-lock.yaml, bun.lockb) to avoid conflicts between different package managers. Each developer should generate their own lock file using their preferred package manager. After that, make sure to delete it from the .gitignore.
+It is assumed you have administrative permissions to an Azure subscription as well as the ability to register applications in Entra ID.
 
 ## Getting Started
 
-1. Install dependencies using your preferred package manager:
+### Deploy Azure Infrastructure
+
+Coming soon
+
+### Install dependencies
+
+Install dependencies using your preferred package manager:
 
    ```bash
    # Using pnpm (recommended)
@@ -34,31 +40,40 @@ This is a sample repository that demonstrates exploration of structured and unst
    bun install
    ```
 
-   > **Note:** This automatically sets up the Python environment as well.
-   >
-   > If you have manual issues, you can run:
-   >
-   > ```sh
-   > npm run install:agent
-   > ```
+   > **Note:** This automatically sets up the Python environment as well. If you have manual issues, you can run: `npm run install:agent`
 
-2. Set up your agent credentials. The backend automatically uses Azure when the Azure env vars below are present; otherwise it falls back to OpenAI. Create a `.env` file inside the `agent` folder with one of the following configurations:
+### Register an App ID in Entra ID
 
-   **OpenAI**
-   ```
-   OPENAI_API_KEY=sk-...your-openai-key-here...
-   OPENAI_CHAT_MODEL_ID=gpt-4o-mini
-   ```
+This repo supports user-level authentication to the agent API, which supports enterprise security as well as documenting user feedback. The application can be created using: [create-chat-app.ps1](scripts/create-chat-app.ps1). Be sure to sign-into your Entra ID tenant using `az login` first.
 
-   **Azure OpenAI**
-   ```
-   AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
-   AZURE_OPENAI_CHAT_DEPLOYMENT_NAME=gpt-4o-mini
-   # If you are not relying on az login:
-   # AZURE_OPENAI_API_KEY=...
+### Set environment variables
+
+Using the output from the application enrollment script, set up your agent credentials. The backend automatically uses Azure when the Azure env vars below are present. Create an `.env` file inside the `agent` folder with one of the following configurations:
+  
+   ```env
+   # Microsoft Foundry settings
+   AZURE_OPENAI_ENDPOINT=https://[your-resource].services.ai.azure.com/
+   AZURE_OPENAI_PROJECT_ENDPOINT=https://[your-resource].services.ai.azure.com/api/projects/[your-project]
+   AZURE_OPENAI_CHAT_DEPLOYMENT_NAME=gpt-4o
+
+   # Entra ID Authentication
+   AZURE_AD_CLIENT_ID=[your-app-id]
+   AZURE_AD_TENANT_ID=[your-tenant-id]
    ```
 
-3. Start the development server:
+> [!IMPORTANT]
+> The Entra ID section is optional. When the two environment variables are set, the API will require a valid token issued by the source tenant with the correct target scope. If you don't require user-level authorization to the API, you can delete this section.
+ 
+Next, create a new `.env.local` file within the `frontend` directory and populate the values. You can use the [.env.example](frontend/.env.example) as a reference.
+
+   ```env
+   NEXT_PUBLIC_AZURE_AD_CLIENT_ID=your-client-id-here
+   NEXT_PUBLIC_AZURE_AD_TENANT_ID=your-tenant-id-here
+   ```
+
+### Start the development server
+
+The following commands can be used to start the enviroment locally:
 
    ```bash
    # Using pnpm
@@ -88,45 +103,3 @@ The following scripts can also be run using your preferred package manager:
 - `start` – Starts the production server
 - `lint` – Runs ESLint for code linting
 - `install:agent` – Installs Python dependencies for the agent
-
-## Documentation
-
-The main UI component is in `src/app/page.tsx`. You can:
-
-- Modify the theme colors and styling
-- Add new frontend actions
-- Customize the CopilotKit sidebar appearance
-
-## 📚 Documentation
-
-- [Microsoft Agent Framework](https://aka.ms/agent-framework) – Learn more about Microsoft Agent Framework and its features
-- [CopilotKit Documentation](https://docs.copilotkit.ai) – Explore CopilotKit’s capabilities
-- [Next.js Documentation](https://nextjs.org/docs) – Learn about Next.js features and API
-
-## Contributing
-
-Feel free to submit issues and enhancement requests! This starter is designed to be easily extensible.
-
-## License
-
-This project is licensed under the MIT License – see the LICENSE file for details.
-
-## Troubleshooting
-
-### Agent Connection Issues
-
-If you see "I'm having trouble connecting to my tools", make sure:
-
-1. The Microsoft Agent Framework agent is running on port 8000
-2. Your OpenAI/Azure credentials are set correctly
-3. Both servers started successfully
-
-### Python Dependencies
-
-If you encounter Python import errors:
-
-```bash
-cd agent
-uv sync
-uv run src/main.py
-```
