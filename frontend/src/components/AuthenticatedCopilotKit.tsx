@@ -107,9 +107,12 @@ export function AuthenticatedCopilotKit({ children, agentName = "my_agent" }: Au
   }
 
   // Use key prop to force remount when agent changes (e.g., navigating between pages)
+  // runtimeUrl is required by CopilotKit even with agents__unsafe_dev_only
+  // We point it to the backend but the local agents will be used instead
   return (
     <CopilotKit
       key={`${agentName}-${accessToken}`}
+      runtimeUrl={API_BASE_URL}
       agent={agentName}
       agents__unsafe_dev_only={agents}
     >
