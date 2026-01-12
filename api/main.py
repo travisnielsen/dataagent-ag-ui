@@ -134,6 +134,31 @@ async def health_check():
     return {"status": "healthy"}
 
 
+@app.get("/info")
+@app.post("/info")
+async def get_runtime_info():
+    """
+    CopilotKit runtime info endpoint for agent discovery.
+    Returns information about available agents.
+    """
+    return {
+        "version": "0.1.0",
+        "agents": {
+            "my_agent": {
+                "name": "my_agent",
+                "description": "General purpose agent",
+                "className": "Agent"
+            },
+            "logistics_agent": {
+                "name": "logistics_agent",
+                "description": "Logistics and shipping agent",
+                "className": "LogisticsAgent"
+            }
+        },
+        "audioFileTranscriptionEnabled": False
+    }
+
+
 @app.get("/me")
 async def get_current_user(request: Request):
     """
