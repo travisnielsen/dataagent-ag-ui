@@ -46,7 +46,7 @@ next-env.d.ts
 .mastra/
 
 # lock files
-package-lock.json
+# package-lock.json
 yarn.lock
 pnpm-lock.yaml
 bun.lockb
