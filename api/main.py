@@ -181,7 +181,7 @@ async def get_current_user(request: Request):
 add_agent_framework_fastapi_endpoint(
     app=app,
     agent=my_agent,
-    path="/",
+    path="/agent",
 )
 
 add_agent_framework_fastapi_endpoint(

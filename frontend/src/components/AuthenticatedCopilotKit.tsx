@@ -48,7 +48,7 @@ export function AuthenticatedCopilotKit({ children, agentName = "my_agent" }: Au
     
     return {
       my_agent: new HttpAgent({
-        url: `${API_BASE_URL}/`,
+        url: `${API_BASE_URL}/agent`,
         headers,
       }),
       logistics_agent: new HttpAgent({
