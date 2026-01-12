@@ -41,6 +41,7 @@ azure_ad_settings = AzureADSettings()
 
 # Paths that don't require authentication
 PUBLIC_PATHS = {
+    "/",
     "/health",
     "/info",
     "/logistics/info",
