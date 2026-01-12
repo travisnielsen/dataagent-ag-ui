@@ -23,6 +23,12 @@ export interface HistoricalPayload {
   route?: string; // e.g., "LAX → ORD"
 }
 
+// Filter criteria for dashboard filtering
+export interface DashboardFilter {
+  route?: string | null;           // e.g., "LAX → ORD" or "LAX-ORD"
+  utilizationType?: 'all' | 'over' | 'under' | null;  // over: >85%, under: <50%
+}
+
 export interface LogisticsAgentState {
   flights: Flight[];
   selectedFlight: Flight | null;
@@ -31,6 +37,8 @@ export interface LogisticsAgentState {
   viewMode: 'list' | 'detail' | 'chart';
   highlightRisks: boolean;
   maxFlights: number;
+  // Dashboard filter applied via chat
+  activeFilter: DashboardFilter | null;
 }
 
 // Demo date: January 11, 2026
@@ -137,6 +145,7 @@ export const initialLogisticsState: LogisticsAgentState = {
   viewMode: 'list',
   highlightRisks: true,
   maxFlights: 10,
+  activeFilter: null,
 };
 
 // Helper to get risk color based on level

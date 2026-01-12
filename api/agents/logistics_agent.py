@@ -7,10 +7,10 @@ for the shipping logistics demo backed by v2 Responses API.
 
 from __future__ import annotations
 
-import random
-from datetime import datetime, timedelta
+import json
+from pathlib import Path
 from textwrap import dedent
-from typing import Annotated, Literal
+from typing import Annotated
 
 from agent_framework import ChatAgent, ChatClientProtocol, ai_function
 from agent_framework_ag_ui import AgentFrameworkAgent
@@ -20,114 +20,30 @@ from pydantic import Field
 from middleware import DeduplicatingOrchestrator
 
 
-# Demo date - fixed for consistent demo presentations
-# Change this date when you want to update the "current" date for demos
-DEMO_DATE = datetime(2026, 1, 11)
+# Load flight data from JSON file
+_DATA_FILE = Path(__file__).parent.parent / "data" / "flights.json"
 
+def _load_flight_data() -> dict:
+    """Load flight data from the JSON file."""
+    with open(_DATA_FILE, "r", encoding="utf-8") as f:
+        return json.load(f)
 
-# Mock data generators
-AIRPORTS = [
-    ("LAX", "Los Angeles"),
-    ("ORD", "Chicago"),
-    ("JFK", "New York"),
-    ("DFW", "Dallas"),
-    ("ATL", "Atlanta"),
-    ("SFO", "San Francisco"),
-    ("SEA", "Seattle"),
-    ("MIA", "Miami"),
-    ("DEN", "Denver"),
-    ("PHX", "Phoenix"),
-]
+# Module-level cache for flight data
+_FLIGHT_DATA: dict = {}
 
-SORT_TIMES = ["06:00", "10:00", "14:00", "18:00", "22:00"]
+def _get_flight_data() -> dict:
+    """Get cached flight data, loading if necessary."""
+    if not _FLIGHT_DATA:
+        _FLIGHT_DATA.update(_load_flight_data())
+    return _FLIGHT_DATA
 
+def _get_all_flights() -> list[dict]:
+    """Get all flights from the data file."""
+    return _get_flight_data().get("flights", [])
 
-def _generate_flight_number(from_code: str, to_code: str) -> str:
-    """Generate a flight number."""
-    return f"{from_code}-{to_code}-{random.randint(1000, 9999)}"
-
-
-def _calculate_risk_level(utilization: float) -> str:
-    """Calculate risk level based on utilization percentage."""
-    if utilization < 50:
-        return "low"
-    elif utilization < 80:
-        return "medium"
-    elif utilization < 95:
-        return "high"
-    else:
-        return "critical"
-
-
-def _generate_mock_flight(
-    bias: Literal["over", "under", "mixed", "risk"] = "mixed",
-    flight_number: str | None = None,
-) -> dict:
-    """Generate a mock flight with realistic data."""
-    from_airport = random.choice(AIRPORTS)
-    to_airport = random.choice([a for a in AIRPORTS if a[0] != from_airport[0]])
-    
-    max_pounds = random.randint(40000, 80000)
-    max_cubic_feet = random.randint(3000, 6000)
-    
-    # Generate utilization based on bias
-    if bias == "over":
-        utilization = random.uniform(85, 110)  # Can be over 100%
-    elif bias == "under":
-        utilization = random.uniform(20, 50)
-    elif bias == "risk":
-        utilization = random.choice([
-            random.uniform(20, 45),   # Under-utilized
-            random.uniform(85, 110),  # Over-utilized
-        ])
-    else:
-        utilization = random.uniform(30, 105)
-    
-    current_pounds = int(max_pounds * utilization / 100)
-    current_cubic_feet = int(max_cubic_feet * utilization / 100)
-    
-    return {
-        "id": f"flight-{random.randint(10000, 99999)}",
-        "flightNumber": flight_number or _generate_flight_number(from_airport[0], to_airport[0]),
-        "flightDate": (DEMO_DATE + timedelta(days=random.randint(0, 3))).strftime("%m/%d/%Y"),
-        "from": from_airport[0],
-        "to": to_airport[0],
-        "currentPounds": current_pounds,
-        "maxPounds": max_pounds,
-        "currentCubicFeet": current_cubic_feet,
-        "maxCubicFeet": max_cubic_feet,
-        "utilizationPercent": round(min(utilization, 100), 1),
-        "riskLevel": _calculate_risk_level(utilization),
-        "sortTime": random.choice(SORT_TIMES),
-    }
-
-
-def _generate_historical_data(days: int = 7, include_predictions: int = 3) -> list[dict]:
-    """Generate historical and predicted payload data."""
-    data = []
-    base_date = DEMO_DATE
-    
-    # Historical data
-    for i in range(days, 0, -1):
-        date = base_date - timedelta(days=i)
-        data.append({
-            "date": date.strftime("%m/%d"),
-            "pounds": random.randint(35000, 65000),
-            "cubicFeet": random.randint(2500, 5000),
-            "predicted": False,
-        })
-    
-    # Predictions
-    for i in range(include_predictions):
-        date = base_date + timedelta(days=i + 1)
-        data.append({
-            "date": date.strftime("%m/%d"),
-            "pounds": random.randint(40000, 60000),
-            "cubicFeet": random.randint(2800, 4800),
-            "predicted": True,
-        })
-    
-    return data
+def _get_historical_data() -> list[dict]:
+    """Get historical data from the data file."""
+    return _get_flight_data().get("historicalData", [])
 
 
 # State schema for the logistics agent
@@ -169,6 +85,18 @@ STATE_SCHEMA: dict[str, object] = {
             },
         },
         "description": "Historical and predicted payload data for charts.",
+    },
+    "selectedRoute": {
+        "type": "string",
+        "description": "The currently selected or filtered route (e.g., 'LAX → ORD').",
+    },
+    "activeFilter": {
+        "type": "object",
+        "properties": {
+            "route": {"type": "string"},
+            "utilizationType": {"type": "string", "enum": ["all", "over", "under"]},
+        },
+        "description": "Active filter for the flight list (route and/or utilization type).",
     },
     "viewMode": {
         "type": "string",
@@ -260,9 +188,12 @@ def get_over_utilized_flights(
     ] = 10,
 ) -> dict:
     """Retrieve over-utilized flights and return structured data for state update."""
-    flights = [_generate_mock_flight(bias="over") for _ in range(count)]
+    all_flights = _get_all_flights()
+    # Filter for over-utilized flights (high or critical risk level)
+    over_utilized = [f for f in all_flights if f.get("riskLevel") in ["high", "critical"]]
+    flights = over_utilized[:count]
     return {
-        "message": f"Found {count} over-utilized flights. The dashboard has been updated.",
+        "message": f"Found {len(flights)} over-utilized flights. The dashboard has been updated.",
         "flights": flights,
     }
 
@@ -278,9 +209,33 @@ def get_under_utilized_flights(
     ] = 10,
 ) -> dict:
     """Retrieve under-utilized flights and return structured data for state update."""
-    flights = [_generate_mock_flight(bias="under") for _ in range(count)]
+    all_flights = _get_all_flights()
+    # Filter for under-utilized flights (low risk level)
+    under_utilized = [f for f in all_flights if f.get("riskLevel") == "low"]
+    flights = under_utilized[:count]
     return {
-        "message": f"Found {count} under-utilized flights. The dashboard has been updated.",
+        "message": f"Found {len(flights)} under-utilized flights. The dashboard has been updated.",
+        "flights": flights,
+    }
+
+
+@ai_function(
+    name="get_optimal_flights",
+    description="Get flights with optimal utilization (50-80% capacity). These are well-balanced flights that don't need adjustment. This updates the dashboard display automatically.",
+)
+def get_optimal_flights(
+    count: Annotated[
+        int,
+        Field(description="Number of flights to return.", default=10),
+    ] = 10,
+) -> dict:
+    """Retrieve optimally-utilized flights and return structured data for state update."""
+    all_flights = _get_all_flights()
+    # Filter for optimal flights (medium risk level = 50-80% utilization)
+    optimal = [f for f in all_flights if f.get("riskLevel") == "medium"]
+    flights = optimal[:count]
+    return {
+        "message": f"Found {len(flights)} optimally-utilized flights (50-80% capacity). The dashboard has been updated.",
         "flights": flights,
     }
 
@@ -296,9 +251,11 @@ def get_predicted_payload(
     ] = 10,
 ) -> dict:
     """Retrieve predicted payload for upcoming flights and return structured data."""
-    flights = [_generate_mock_flight(bias="mixed") for _ in range(count)]
+    all_flights = _get_all_flights()
+    # Return a mix of flights for predicted payload view
+    flights = all_flights[:count]
     return {
-        "message": f"Predicted payload for {count} upcoming flights. The dashboard has been updated.",
+        "message": f"Predicted payload for {len(flights)} upcoming flights. The dashboard has been updated.",
         "flights": flights,
     }
 
@@ -314,22 +271,41 @@ def get_flight_details(
     ],
 ) -> dict:
     """Retrieve detailed information for a specific flight and return structured data."""
-    # Parse flight number to get airports
-    parts = flight_number.upper().replace(" ", "").split("-")
+    all_flights = _get_all_flights()
+    
+    # Normalize flight number for matching
+    search_number = flight_number.upper().replace(" ", "")
+    
+    # Find the flight by flight number
+    for flight in all_flights:
+        if flight.get("flightNumber", "").upper() == search_number:
+            return {
+                "message": f"Showing details for flight {flight['flightNumber']}.",
+                "selectedFlight": flight,
+            }
+    
+    # If not found, return the first flight with matching route pattern
+    parts = search_number.split("-")
     if len(parts) >= 2:
         from_code = parts[0]
         to_code = parts[1]
-    else:
-        from_code = "LAX"
-        to_code = "ORD"
+        for flight in all_flights:
+            if flight.get("from") == from_code and flight.get("to") == to_code:
+                return {
+                    "message": f"Showing details for flight {flight['flightNumber']} (closest match).",
+                    "selectedFlight": flight,
+                }
     
-    flight = _generate_mock_flight(flight_number=flight_number)
-    flight["from"] = from_code
-    flight["to"] = to_code
+    # Return first flight as fallback
+    if all_flights:
+        return {
+            "message": f"Flight {flight_number} not found. Showing {all_flights[0]['flightNumber']} instead.",
+            "selectedFlight": all_flights[0],
+        }
     
     return {
-        "message": f"Showing details for flight {flight['flightNumber']}.",
-        "selectedFlight": flight,
+        "message": "No flights available.",
+        "selectedFlight": None,
     }
 
 
@@ -344,7 +320,10 @@ def get_utilization_risks(
     ] = 15,
 ) -> dict:
     """Retrieve flights with utilization risks and return structured data."""
-    flights = [_generate_mock_flight(bias="risk") for _ in range(count)]
+    all_flights = _get_all_flights()
+    # Filter for flights with risk (not medium utilization)
+    risk_flights = [f for f in all_flights if f.get("riskLevel") != "medium"]
+    flights = risk_flights[:count]
     
     over = [f for f in flights if f["riskLevel"] in ["high", "critical"]]
     under = [f for f in flights if f["riskLevel"] == "low"]
@@ -368,18 +347,40 @@ def get_historical_payload(
         int,
         Field(description="Number of prediction days to include.", default=3),
     ] = 3,
+    route: Annotated[
+        str | None,
+        Field(description="Optional route filter (e.g., 'LAX → ORD' or 'LAX-ORD')."),
+    ] = None,
 ) -> dict:
     """Retrieve historical and predicted payload data and return structured data."""
-    data = _generate_historical_data(days, include_predictions)
+    historical_data = _get_historical_data()
     
-    historical = [d for d in data if not d["predicted"]]
-    predictions = [d for d in data if d["predicted"]]
+    # If a route is specified, filter for that route
+    if route:
+        # Normalize the route string
+        normalized_route = route.replace("-", " → ").replace("->", " → ")
+        matching_data = [d for d in historical_data if d.get("route") == normalized_route]
+        if matching_data:
+            historical_data = matching_data
     
-    avg_pounds = sum(d["pounds"] for d in historical) // len(historical)
+    # Separate historical and predicted data
+    historical = [d for d in historical_data if not d.get("predicted", False)]
+    predictions = [d for d in historical_data if d.get("predicted", False)]
+    
+    # Limit to requested counts
+    result_data = historical[:days] + predictions[:include_predictions]
+    
+    historical_count = min(days, len(historical))
+    predicted_count = min(include_predictions, len(predictions))
+    
+    if historical:
+        avg_pounds = sum(d.get("pounds", 0) for d in historical[:days]) // max(1, historical_count)
+    else:
+        avg_pounds = 0
     
     return {
-        "message": f"Historical payload data ({days} days + {include_predictions} predictions). Average daily weight: {avg_pounds:,} lbs. The chart has been updated.",
-        "historical_data": data,
+        "message": f"Historical payload data ({historical_count} days + {predicted_count} predictions). Average daily weight: {avg_pounds:,} lbs. The chart has been updated.",
+        "historical_data": result_data,
     }
 
 
@@ -396,7 +397,8 @@ def create_logistics_agent(chat_client: ChatClientProtocol) -> AgentFrameworkAge
             
             1. DATA RETRIEVAL TOOLS - Use these to get flight data:
                - get_over_utilized_flights: Get flights with >85% utilization
-               - get_under_utilized_flights: Get flights with <50% utilization  
+               - get_under_utilized_flights: Get flights with <50% utilization
+               - get_optimal_flights: Get flights with optimal 50-80% utilization
                - get_predicted_payload: Get predicted payload for upcoming flights
                - get_flight_details: Get details for a specific flight number
                - get_utilization_risks: Get all flights with utilization concerns
@@ -447,6 +449,7 @@ def create_logistics_agent(chat_client: ChatClientProtocol) -> AgentFrameworkAge
             update_historical_data,
             get_over_utilized_flights,
             get_under_utilized_flights,
+            get_optimal_flights,
             get_predicted_payload,
             get_flight_details,
             get_utilization_risks,

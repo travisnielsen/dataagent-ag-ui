@@ -1,10 +1,10 @@
 "use client";
 
+import React, { useState } from "react";
 import { AuthButton } from "@/components/AuthButton";
-import { LogisticsAgentState, Flight, initialLogisticsState } from "@/lib/logistics-types";
+import { LogisticsAgentState, Flight, DashboardFilter, initialLogisticsState } from "@/lib/logistics-types";
 import { useCoAgent, useCopilotAction } from "@copilotkit/react-core";
 import { CopilotKitCSSProperties, CopilotChat } from "@copilotkit/react-ui";
-import { useState } from "react";
 import { FlightListCard } from "@/components/logistics/FlightListCard";
 import { FlightDetailCard } from "@/components/logistics/FlightDetailCard";
 import { HistoricalChart } from "@/components/logistics/HistoricalChart";
@@ -76,6 +76,10 @@ export default function LogisticsPage() {
                   message: "Show me top 10 under-utilized flights for the next sort time",
                 },
                 {
+                  title: "LAX to ORD Route",
+                  message: "Show me information for the LAX to ORD route",
+                },
+                {
                   title: "Predicted Payload",
                   message: "Show me predicted payload for upcoming flights",
                 },
@@ -110,6 +114,16 @@ function LogisticsDashboard({ themeColor }: { themeColor: string }) {
     name: "logistics_agent",
     initialState: initialLogisticsState,
   });
+
+  // Debug: Log state changes
+  React.useEffect(() => {
+    console.log('[LogisticsDashboard] State changed:', {
+      flightsCount: state.flights?.length ?? 0,
+      historicalCount: state.historicalData?.length ?? 0,
+      selectedFlight: state.selectedFlight?.flightNumber ?? null,
+      activeFilter: state.activeFilter,
+    });
+  }, [state]);
 
   // 🪁 Generative UI: Render flight list from agent tool calls
   useCopilotAction({
@@ -165,6 +179,88 @@ function LogisticsDashboard({ themeColor }: { themeColor: string }) {
     },
   }, [themeColor]);
 
+  // 🪁 Frontend Action: Filter dashboard by route and/or utilization type
+  useCopilotAction({
+    name: "filter_dashboard",
+    description: "Filter the Flight Shipments table and Payload History chart by route and/or utilization type. IMPORTANT: This tool ONLY filters data that is ALREADY loaded in the dashboard. If there is no data loaded yet, you MUST first call a data retrieval tool (like get_utilization_risks, get_over_utilized_flights, get_predicted_payload, etc.) to load data, THEN call this tool to filter it. Use this when the user asks to see data for a specific route (e.g., 'LAX to ORD') or utilization status (over-utilized, under-utilized). To clear filters, call with no parameters.",
+    parameters: [
+      { 
+        name: "route", 
+        type: "string", 
+        description: "The route to filter by, e.g., 'LAX → ORD', 'LAX-ORD', or 'LAX to ORD'. Use airport codes.",
+        required: false 
+      },
+      { 
+        name: "utilizationType", 
+        type: "string", 
+        description: "Filter by utilization: 'over' for over-utilized (>85%), 'under' for under-utilized (<50%), or 'all' to show all.",
+        required: false 
+      },
+    ],
+    handler({ route, utilizationType }) {
+      console.log('[filter_dashboard] HANDLER CALLED with:', { route, utilizationType });
+      
+      // Normalize route format: "LAX-ORD" or "LAX to ORD" -> "LAX → ORD"
+      let normalizedRoute = route;
+      if (route) {
+        normalizedRoute = route
+          .toUpperCase()
+          .replace(/\s*-\s*/g, ' → ')
+          .replace(/\s+TO\s+/gi, ' → ')
+          .trim();
+      }
+      
+      const filter: DashboardFilter = {
+        route: normalizedRoute || null,
+        utilizationType: (utilizationType as 'all' | 'over' | 'under') || null,
+      };
+      
+      // Check if filter is effectively empty
+      const hasFilter = filter.route || (filter.utilizationType && filter.utilizationType !== 'all');
+      
+      console.log('[filter_dashboard] Setting state:', { filter, hasFilter, normalizedRoute });
+      
+      // Use functional update to avoid stale closure issues
+      setState((prevState) => ({
+        ...prevState,
+        activeFilter: hasFilter ? filter : null,
+        selectedRoute: normalizedRoute || null,
+      }));
+      
+      const result = hasFilter 
+        ? `Dashboard filtered: ${filter.route ? `route ${filter.route}` : ''}${filter.route && filter.utilizationType ? ', ' : ''}${filter.utilizationType && filter.utilizationType !== 'all' ? `${filter.utilizationType}-utilized flights` : ''}`
+        : 'Dashboard filters cleared.';
+      
+      console.log('[filter_dashboard] Returning result:', result);
+      return result;
+    },
+    render: ({ args, status }) => {
+      if (status === 'executing') {
+        return (
+          <div className="text-sm text-gray-300 p-2 bg-white/10 rounded-lg animate-pulse">
+            🔍 Applying filters...
+          </div>
+        );
+      }
+      const hasFilter = args.route || (args.utilizationType && args.utilizationType !== 'all');
+      return (
+        <div className="text-sm text-gray-300 p-2 bg-white/10 rounded-lg">
+          {hasFilter ? (
+            <>🔍 Filtered: {args.route && <span className="text-cyan-300">{args.route}</span>}
+            {args.route && args.utilizationType && args.utilizationType !== 'all' && ' • '}
+            {args.utilizationType && args.utilizationType !== 'all' && (
+              <span className={args.utilizationType === 'over' ? 'text-orange-300' : 'text-blue-300'}>
+                {args.utilizationType === 'over' ? 'Over-utilized' : 'Under-utilized'}
+              </span>
+            )}</>
+          ) : (
+            <>✓ Showing all flights</>
+          )}
+        </div>
+      );
+    },
+  }, [state, setState]);
+
   // Handle flight selection from the list (bi-directional state update)
   const handleSelectFlight = (flight: Flight) => {
     const selectedRoute = `${flight.from} → ${flight.to}`;
@@ -218,6 +314,49 @@ function LogisticsDashboard({ themeColor }: { themeColor: string }) {
     return state.selectedRoute || getInferredRoute();
   };
 
+  // Get filtered flights based on activeFilter
+  const getFilteredFlights = () => {
+    console.log('[getFilteredFlights] Called with:', {
+      flightsCount: state.flights?.length ?? 0,
+      activeFilter: state.activeFilter,
+    });
+    
+    if (!state.flights || state.flights.length === 0) {
+      console.log('[getFilteredFlights] No flights to filter');
+      return [];
+    }
+    
+    let filtered = [...state.flights];
+    const filter = state.activeFilter;
+    
+    if (filter) {
+      // Filter by route
+      if (filter.route) {
+        console.log('[getFilteredFlights] Filtering by route:', filter.route);
+        filtered = filtered.filter(f => {
+          const flightRoute = `${f.from} → ${f.to}`;
+          const matches = flightRoute === filter.route;
+          console.log(`[getFilteredFlights]   ${flightRoute} === ${filter.route}? ${matches}`);
+          return matches;
+        });
+      }
+      
+      // Filter by utilization type
+      if (filter.utilizationType && filter.utilizationType !== 'all') {
+        if (filter.utilizationType === 'over') {
+          // Over-utilized: high or critical risk (>85%)
+          filtered = filtered.filter(f => f.riskLevel === 'high' || f.riskLevel === 'critical');
+        } else if (filter.utilizationType === 'under') {
+          // Under-utilized: low risk (<50%)
+          filtered = filtered.filter(f => f.riskLevel === 'low');
+        }
+      }
+    }
+    
+    console.log('[getFilteredFlights] Returning:', filtered.length, 'flights');
+    return filtered;
+  };
+
   return (
     <div
       style={{ backgroundColor: `${themeColor}15` }}
@@ -261,12 +400,41 @@ function LogisticsDashboard({ themeColor }: { themeColor: string }) {
           </div>
         </div>
 
+        {/* Active Filter Indicator */}
+        {state.activeFilter && (
+          <div className="flex items-center gap-2 px-3 py-2 bg-cyan-900/30 border border-cyan-700/50 rounded-lg">
+            <span className="text-cyan-300 text-sm">🔍 Active Filter:</span>
+            {state.activeFilter.route && (
+              <span className="px-2 py-0.5 bg-cyan-700/50 rounded text-white text-sm">
+                {state.activeFilter.route}
+              </span>
+            )}
+            {state.activeFilter.utilizationType && state.activeFilter.utilizationType !== 'all' && (
+              <span className={`px-2 py-0.5 rounded text-white text-sm ${
+                state.activeFilter.utilizationType === 'over' ? 'bg-orange-700/50' : 'bg-blue-700/50'
+              }`}>
+                {state.activeFilter.utilizationType === 'over' ? 'Over-utilized' : 'Under-utilized'}
+              </span>
+            )}
+            <button
+              onClick={() => setState({ 
+                ...state, 
+                activeFilter: null, 
+                selectedRoute: null,
+              })}
+              className="ml-2 text-gray-400 hover:text-white text-sm"
+            >
+              ✕ Clear
+            </button>
+          </div>
+        )}
+
         {/* Main Content Area */}
         <div className="flex-1 flex flex-col gap-6 overflow-auto">
           {/* Flight List - Hidden when a flight is selected */}
           {!state.selectedFlight && (
             <FlightListCard
-              flights={state.flights || []}
+              flights={getFilteredFlights()}
               selectedFlightId={state.selectedFlight?.id}
               onSelectFlight={handleSelectFlight}
               highlightRisks={highlightRisks}
