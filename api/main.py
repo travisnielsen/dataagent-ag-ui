@@ -115,10 +115,8 @@ app = FastAPI(
     } if AUTH_ENABLED else None,
 )
 
-# Add Azure AD auth middleware only if configured
-if AUTH_ENABLED:
-    app.add_middleware(AzureADAuthMiddleware, settings=azure_ad_settings)
-
+# IMPORTANT: Middleware runs in reverse order of addition
+# CORS must be added AFTER auth so it runs FIRST (handles preflight before auth)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -126,6 +124,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Add Azure AD auth middleware only if configured
+# This runs AFTER CORS, so preflight OPTIONS requests are handled first
+if AUTH_ENABLED:
+    app.add_middleware(AzureADAuthMiddleware, settings=azure_ad_settings)
 
 # Protected health check endpoint (example of how to use auth)
 @app.get("/health")
