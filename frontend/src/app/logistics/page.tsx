@@ -61,7 +61,6 @@ export default function LogisticsPage() {
           {/* Chat panel - 30% */}
           <div className="w-[30%] h-full border border-gray-700 rounded-xl shadow-lg overflow-hidden flex-shrink-0">
             <CopilotChat
-              id="logistics-chat"
               className="h-full"
               labels={{
                 title: "Logistics Assistant",
