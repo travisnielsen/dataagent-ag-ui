@@ -12,6 +12,13 @@ RUN npm ci --ignore-scripts
 # Copy application code
 COPY . .
 
+# Build arguments for Next.js public environment variables
+# These are embedded at build time
+ARG NEXT_PUBLIC_AZURE_AD_CLIENT_ID
+ARG NEXT_PUBLIC_AZURE_AD_TENANT_ID
+ENV NEXT_PUBLIC_AZURE_AD_CLIENT_ID=$NEXT_PUBLIC_AZURE_AD_CLIENT_ID
+ENV NEXT_PUBLIC_AZURE_AD_TENANT_ID=$NEXT_PUBLIC_AZURE_AD_TENANT_ID
+
 # Build the Next.js application
 RUN npm run build
 
