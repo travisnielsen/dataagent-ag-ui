@@ -85,14 +85,11 @@ export function AuthenticatedCopilotKit({ children, agentName = "my_agent" }: Au
     Authorization: `Bearer ${accessToken}`,
   };
 
-  // Use environment variable for runtime URL, fallback to local API route for development
-  const runtimeUrl = process.env.NEXT_PUBLIC_COPILOTKIT_RUNTIME_URL || "/api/copilotkit";
-
   // Use key prop to force remount when agent changes (e.g., navigating between pages)
   return (
     <CopilotKit
       key={agentName}
-      runtimeUrl={runtimeUrl}
+      runtimeUrl="/api/copilotkit"
       agent={agentName}
       headers={headers}
     >

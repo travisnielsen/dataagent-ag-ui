@@ -613,3 +613,28 @@ resource "azurerm_container_app" "api" {
     azurerm_role_assignment.api_storage
   ]
 }
+
+
+#################################################################################
+# Azure Static Web App for Next.js Frontend
+#################################################################################
+
+resource "azurerm_static_web_app" "frontend" {
+  name                = "${local.identifier}-swa"
+  resource_group_name = azurerm_resource_group.shared_rg.name
+  location            = var.region
+  sku_tier            = "Standard"
+  sku_size            = "Standard"
+
+  tags = local.tags
+}
+
+# Output the deployment token for GitHub Actions
+output "static_web_app_api_key" {
+  value     = azurerm_static_web_app.frontend.api_key
+  sensitive = true
+}
+
+output "static_web_app_default_hostname" {
+  value = azurerm_static_web_app.frontend.default_host_name
+}
