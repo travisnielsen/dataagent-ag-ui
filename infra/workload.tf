@@ -616,25 +616,84 @@ resource "azurerm_container_app" "api" {
 
 
 #################################################################################
-# Azure Static Web App for Next.js Frontend
+# Container App for Next.js Frontend
 #################################################################################
 
-resource "azurerm_static_web_app" "frontend" {
-  name                = "${local.identifier}-swa"
-  resource_group_name = azurerm_resource_group.shared_rg.name
-  location            = var.region
-  sku_tier            = "Standard"
-  sku_size            = "Standard"
+resource "azurerm_container_app" "frontend" {
+  name                         = "${local.identifier}-frontend"
+  resource_group_name          = azurerm_resource_group.shared_rg.name
+  container_app_environment_id = module.container_app_environment.resource_id
+  revision_mode                = "Single"
+  tags                         = local.tags
 
-  tags = local.tags
+  identity {
+    type         = "UserAssigned"
+    identity_ids = [azurerm_user_assigned_identity.api_identity.id]
+  }
+
+  registry {
+    server   = module.container_registry.resource.login_server
+    identity = azurerm_user_assigned_identity.api_identity.id
+  }
+
+  ingress {
+    external_enabled = true
+    target_port      = 3000
+    transport        = "http"
+
+    traffic_weight {
+      percentage      = 100
+      latest_revision = true
+    }
+
+    cors {
+      allowed_origins    = ["*"]
+      allowed_methods    = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+      allowed_headers    = ["*"]
+      exposed_headers    = ["*"]
+      max_age_in_seconds = 3600
+    }
+  }
+
+  template {
+    min_replicas = 1
+    max_replicas = 3
+
+    container {
+      name   = "frontend"
+      image  = "${module.container_registry.resource.login_server}/logistics-frontend:latest"
+      cpu    = 0.5
+      memory = "1Gi"
+
+      env {
+        name  = "NODE_ENV"
+        value = "production"
+      }
+      env {
+        name  = "AGENT_API_BASE_URL"
+        value = "https://${azurerm_container_app.api.ingress[0].fqdn}"
+      }
+      env {
+        name  = "NEXT_PUBLIC_AZURE_AD_CLIENT_ID"
+        value = var.frontend_app_client_id
+      }
+      env {
+        name  = "NEXT_PUBLIC_AZURE_AD_TENANT_ID"
+        value = data.azurerm_client_config.current.tenant_id
+      }
+    }
+  }
+
+  depends_on = [
+    azurerm_role_assignment.api_acr_pull,
+    azurerm_container_app.api
+  ]
 }
 
-# Output the deployment token for GitHub Actions
-output "static_web_app_api_key" {
-  value     = azurerm_static_web_app.frontend.api_key
-  sensitive = true
+output "frontend_url" {
+  value = "https://${azurerm_container_app.frontend.ingress[0].fqdn}"
 }
 
-output "static_web_app_default_hostname" {
-  value = azurerm_static_web_app.frontend.default_host_name
+output "api_url" {
+  value = "https://${azurerm_container_app.api.ingress[0].fqdn}"
 }

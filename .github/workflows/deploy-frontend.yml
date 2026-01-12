@@ -1,4 +1,4 @@
-name: Deploy Frontend to Azure Static Website
+name: Deploy Frontend to Azure Container Apps
 
 on:
   push:
@@ -9,8 +9,10 @@ on:
   workflow_dispatch:
 
 env:
-  NODE_VERSION: '20'
-  AZURE_STORAGE_ACCOUNT: ${{ vars.AZURE_STORAGE_ACCOUNT }}
+  REGISTRY: ${{ vars.AZURE_CONTAINER_REGISTRY }}
+  IMAGE_NAME: logistics-frontend
+  CONTAINER_APP_NAME: ${{ vars.AZURE_FRONTEND_CONTAINER_APP_NAME }}
+  RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
 
 permissions:
   id-token: write
@@ -24,25 +26,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Install dependencies
-        working-directory: frontend
-        run: npm ci --ignore-scripts
-
-      - name: Build frontend
-        working-directory: frontend
-        env:
-          NEXT_PUBLIC_API_BASE_URL: ${{ vars.NEXT_PUBLIC_API_BASE_URL }}
-          NEXT_PUBLIC_AZURE_AD_CLIENT_ID: ${{ vars.NEXT_PUBLIC_AZURE_AD_CLIENT_ID }}
-          NEXT_PUBLIC_AZURE_AD_TENANT_ID: ${{ vars.NEXT_PUBLIC_AZURE_AD_TENANT_ID }}
-        run: npm run build
-
       - name: Login to Azure
         uses: azure/login@v2
         with:
@@ -50,38 +33,48 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Add runner IP to storage firewall
+      - name: Build and push image using ACR Tasks
         uses: azure/cli@v2
         with:
           inlineScript: |
-            RUNNER_IP=$(curl -s https://api.ipify.org)
-            echo "Adding runner IP $RUNNER_IP to storage firewall"
-            az storage account network-rule add \
-              --account-name ${{ env.AZURE_STORAGE_ACCOUNT }} \
-              --ip-address $RUNNER_IP \
-              --only-show-errors || true
-            # Wait for firewall rule to propagate
+            az acr build \
+              --registry ${{ env.REGISTRY }} \
+              --image ${{ env.IMAGE_NAME }}:${{ github.sha }} \
+              --image ${{ env.IMAGE_NAME }}:latest \
+              --file ./frontend/Dockerfile \
+              ./frontend
+
+      - name: Deploy to Azure Container Apps
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+            az containerapp update \
+              --name ${{ env.CONTAINER_APP_NAME }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --image ${{ env.REGISTRY }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+      - name: Verify deployment
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+            # Wait for the new revision to be ready
+            echo "Waiting for deployment to complete..."
             sleep 30
-
-      - name: Deploy to Azure Static Website
-        uses: azure/cli@v2
-        with:
-          inlineScript: |
-            az storage blob upload-batch \
-              --account-name ${{ env.AZURE_STORAGE_ACCOUNT }} \
-              --destination '$web' \
-              --source frontend/out \
-              --overwrite \
-              --auth-mode login
-
-      - name: Remove runner IP from storage firewall
-        if: always()
-        uses: azure/cli@v2
-        with:
-          inlineScript: |
-            RUNNER_IP=$(curl -s https://api.ipify.org)
-            echo "Removing runner IP $RUNNER_IP from storage firewall"
-            az storage account network-rule remove \
-              --account-name ${{ env.AZURE_STORAGE_ACCOUNT }} \
-              --ip-address $RUNNER_IP \
-              --only-show-errors || true
+            
+            # Get the container app URL
+            FQDN=$(az containerapp show \
+              --name ${{ env.CONTAINER_APP_NAME }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --query "properties.configuration.ingress.fqdn" \
+              --output tsv)
+            
+            echo "Frontend URL: https://$FQDN"
+            
+            # Health check
+            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://$FQDN" || echo "000")
+            
+            if [ "$HTTP_STATUS" = "200" ]; then
+              echo "✅ Health check passed (HTTP $HTTP_STATUS)"
+            else
+              echo "⚠️ Health check returned HTTP $HTTP_STATUS (may still be starting)"
+            fi
