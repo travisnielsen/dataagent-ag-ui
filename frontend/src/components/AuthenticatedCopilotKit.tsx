@@ -1,10 +1,14 @@
 "use client";
 
 import { CopilotKit } from "@copilotkit/react-core";
+import { HttpAgent } from "@ag-ui/client";
 import { useAccessToken } from "@/lib/useAccessToken";
 import { useIsAuthenticated, useMsal } from "@azure/msal-react";
 import { loginRequest } from "@/lib/msalConfig";
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
+
+// API URL Configuration - uses environment variables with fallbacks
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
 
 interface AuthenticatedCopilotKitProps {
   children: React.ReactNode;
@@ -85,13 +89,25 @@ export function AuthenticatedCopilotKit({ children, agentName = "my_agent" }: Au
     Authorization: `Bearer ${accessToken}`,
   };
 
+  // Create agents that point directly to the backend API
+  // This bypasses the need for the Next.js API route and CopilotRuntime
+  const agents = useMemo(() => ({
+    my_agent: new HttpAgent({
+      url: `${API_BASE_URL}/`,
+      headers,
+    }),
+    logistics_agent: new HttpAgent({
+      url: `${API_BASE_URL}/logistics`,
+      headers,
+    }),
+  }), [accessToken]);
+
   // Use key prop to force remount when agent changes (e.g., navigating between pages)
   return (
     <CopilotKit
-      key={agentName}
-      runtimeUrl="/api/copilotkit"
+      key={`${agentName}-${accessToken}`}
       agent={agentName}
-      headers={headers}
+      agents__unsafe_dev_only={agents}
     >
       {children}
     </CopilotKit>
