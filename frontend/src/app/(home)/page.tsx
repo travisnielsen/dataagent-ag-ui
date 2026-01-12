@@ -58,7 +58,6 @@ export default function CopilotKitPage() {
           {/* Chat panel - 30% */}
           <div className="w-[30%] h-full border border-gray-700 rounded-xl shadow-lg overflow-hidden flex-shrink-0">
             <CopilotChat
-              id="home-chat"
               className="h-full"
               labels={{
                 title: "Chat Assistant",
