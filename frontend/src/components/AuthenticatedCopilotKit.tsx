@@ -37,10 +37,31 @@ export function AuthenticatedCopilotKit({ children, agentName = "my_agent" }: Au
     }
   }, [error]);
 
+  // Create agents that point directly to the backend API
+  // This must be called before any conditional returns to satisfy React's hook rules
+  const agents = useMemo(() => {
+    if (!accessToken) return null;
+    
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${accessToken}`,
+    };
+    
+    return {
+      my_agent: new HttpAgent({
+        url: `${API_BASE_URL}/`,
+        headers,
+      }),
+      logistics_agent: new HttpAgent({
+        url: `${API_BASE_URL}/logistics`,
+        headers,
+      }),
+    };
+  }, [accessToken]);
+
   // Force sign-in if not authenticated
   const handleSignIn = async () => {
     try {
-      await instance.loginPopup(loginRequest);
+      await instance.loginRedirect(loginRequest);
     } catch (e) {
       console.error("Login failed:", e);
     }
@@ -71,7 +92,7 @@ export function AuthenticatedCopilotKit({ children, agentName = "my_agent" }: Au
   }
 
   // If authenticated but no token (error state), show retry option
-  if (!accessToken) {
+  if (!accessToken || !agents) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-gray-400 gap-4">
         <span>Unable to acquire access token</span>
@@ -84,23 +105,6 @@ export function AuthenticatedCopilotKit({ children, agentName = "my_agent" }: Au
       </div>
     );
   }
-
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${accessToken}`,
-  };
-
-  // Create agents that point directly to the backend API
-  // This bypasses the need for the Next.js API route and CopilotRuntime
-  const agents = useMemo(() => ({
-    my_agent: new HttpAgent({
-      url: `${API_BASE_URL}/`,
-      headers,
-    }),
-    logistics_agent: new HttpAgent({
-      url: `${API_BASE_URL}/logistics`,
-      headers,
-    }),
-  }), [accessToken]);
 
   // Use key prop to force remount when agent changes (e.g., navigating between pages)
   return (
