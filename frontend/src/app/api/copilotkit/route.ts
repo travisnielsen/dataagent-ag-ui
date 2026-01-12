@@ -36,18 +36,6 @@ export const POST = async (req: NextRequest) => {
   // Get the Authorization header from the request
   const authHeader = req.headers.get("authorization");
 
-  // Debug logging
-  console.log(`[CopilotKit API] Received request, auth header present: ${!!authHeader}`);
-
-  // Try to read request body and log the agent being requested
-  try {
-    const clonedReq = req.clone();
-    const body = await clonedReq.json();
-    console.log(`[CopilotKit API] Agent requested: ${body?.agent || "not specified"}`);
-  } catch {
-    console.log("[CopilotKit API] Could not parse request body");
-  }
-
   // Clone the request and remove the Authorization header to prevent duplication
   // CopilotKit might be forwarding it separately
   const headers = new Headers(req.headers);

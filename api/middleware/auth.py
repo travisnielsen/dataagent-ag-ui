@@ -80,8 +80,8 @@ class AzureADAuthMiddleware(BaseHTTPMiddleware):
         if settings.AZURE_AD_APP_ID_URI:
             self.valid_audiences.append(settings.AZURE_AD_APP_ID_URI)
         
-        logger.info(f"Azure AD Auth configured with audiences: {self.valid_audiences}")
-        logger.info(f"Azure AD Auth configured with issuers: {self.valid_issuers}")
+        logger.debug(f"Azure AD Auth configured with audiences: {self.valid_audiences}")
+        logger.debug(f"Azure AD Auth configured with issuers: {self.valid_issuers}")
     
     async def dispatch(self, request: Request, call_next):
         # Normalize path by removing trailing slash for comparison

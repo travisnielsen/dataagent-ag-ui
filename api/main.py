@@ -39,6 +39,9 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 # Reduce agent_framework verbosity (it logs all message content at INFO level)
 logging.getLogger("agent_framework").setLevel(logging.WARNING)
+logging.getLogger("agent_framework_ag_ui").setLevel(logging.WARNING)
+# Reduce fastapi_azure_auth verbosity
+logging.getLogger("fastapi_azure_auth").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 

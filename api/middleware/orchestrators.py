@@ -51,19 +51,17 @@ class DeduplicatingOrchestrator(Orchestrator):
         # to only send new ones (server has the history via response_id chaining)
         agui_thread_id = context.thread_id
         
-        # DEBUG: Log the thread state
-        logger.info("[DeduplicatingOrchestrator] Thread ID: %s", agui_thread_id)
-        logger.info("[DeduplicatingOrchestrator] Thread store keys: %s", list(thread_response_store.keys()))
-        logger.info("[DeduplicatingOrchestrator] Is in store: %s", agui_thread_id in thread_response_store)
-        
         # Set the ContextVar so the middleware can access the thread_id
         token = current_agui_thread_id.set(agui_thread_id)
         
         try:
+            # Log thread state at debug level
+            logger.debug("[DeduplicatingOrchestrator] Thread ID: %s, in store: %s", agui_thread_id, agui_thread_id in thread_response_store)
+            
             if agui_thread_id and agui_thread_id in thread_response_store:
-                logger.info("[DeduplicatingOrchestrator] CONTINUING conversation - middleware will filter messages")
+                logger.debug("[DeduplicatingOrchestrator] CONTINUING conversation")
             else:
-                logger.info("[DeduplicatingOrchestrator] NEW conversation - no filtering needed")
+                logger.debug("[DeduplicatingOrchestrator] NEW conversation")
             
             seen_tool_call_ids: set[str] = set()
             completed_tool_call_ids: set[str] = set()
@@ -81,7 +79,7 @@ class DeduplicatingOrchestrator(Orchestrator):
                         logger.debug("[DeduplicatingOrchestrator] Filtering duplicate ToolCallStartEvent: %s", tool_call_id)
                         continue
                     seen_tool_call_ids.add(tool_call_id)
-                    logger.info("[DeduplicatingOrchestrator] Emitting ToolCallStartEvent: %s (%s)", tool_call_id, event.tool_call_name)
+                    logger.debug("[DeduplicatingOrchestrator] Emitting ToolCallStartEvent: %s (%s)", tool_call_id, event.tool_call_name)
                 
                 elif isinstance(event, ToolCallArgsEvent):
                     tool_call_id = event.tool_call_id
@@ -100,7 +98,7 @@ class DeduplicatingOrchestrator(Orchestrator):
                         logger.debug("[DeduplicatingOrchestrator] Filtering duplicate ToolCallEndEvent: %s", tool_call_id)
                         continue
                     completed_tool_call_ids.add(tool_call_id)
-                    logger.info("[DeduplicatingOrchestrator] Emitting ToolCallEndEvent: %s", tool_call_id)
+                    logger.debug("[DeduplicatingOrchestrator] Emitting ToolCallEndEvent: %s", tool_call_id)
                 
                 elif isinstance(event, ToolCallResultEvent):
                     tool_call_id = event.tool_call_id
@@ -117,7 +115,7 @@ class DeduplicatingOrchestrator(Orchestrator):
                         continue
                     # Buffer the START event - only emit when we see content
                     pending_start_events[message_id] = event
-                    logger.info("[DeduplicatingOrchestrator] Buffering TextMessageStart: %s (waiting for content)", message_id)
+                    logger.debug("[DeduplicatingOrchestrator] Buffering TextMessageStart: %s", message_id)
                     continue  # Don't yield yet
                 
                 elif isinstance(event, TextMessageContentEvent):
@@ -126,7 +124,7 @@ class DeduplicatingOrchestrator(Orchestrator):
                     if message_id in pending_start_events:
                         start_event = pending_start_events.pop(message_id)
                         active_text_message_ids.add(message_id)
-                        logger.info("[DeduplicatingOrchestrator] Emitting buffered TextMessageStart: %s (has content)", message_id)
+                        logger.debug("[DeduplicatingOrchestrator] Emitting buffered TextMessageStart: %s", message_id)
                         yield start_event
                     # Only emit content for messages we've started
                     if message_id not in active_text_message_ids:
@@ -138,13 +136,13 @@ class DeduplicatingOrchestrator(Orchestrator):
                     # If message is still pending (never got content), just drop both start and end
                     if message_id in pending_start_events:
                         pending_start_events.pop(message_id)
-                        logger.info("[DeduplicatingOrchestrator] Dropping phantom message (no content): %s", message_id)
+                        logger.debug("[DeduplicatingOrchestrator] Dropping phantom message (no content): %s", message_id)
                         continue
                     if message_id not in active_text_message_ids:
                         logger.warning("[DeduplicatingOrchestrator] TextMessageEnd for unknown message: %s, skipping", message_id)
                         continue
                     active_text_message_ids.discard(message_id)
-                    logger.info("[DeduplicatingOrchestrator] Closing TextMessage: %s", message_id)
+                    logger.debug("[DeduplicatingOrchestrator] Closing TextMessage: %s", message_id)
                 
                 elif isinstance(event, RunFinishedEvent):
                     # Close any messages that are active (received content but not closed)
@@ -152,17 +150,16 @@ class DeduplicatingOrchestrator(Orchestrator):
                         logger.warning("[DeduplicatingOrchestrator] Found %d unclosed text messages, closing them", 
                                       len(active_text_message_ids))
                         for msg_id in list(active_text_message_ids):
-                            logger.info("[DeduplicatingOrchestrator] Emitting TextMessageEndEvent for: %s", msg_id)
+                            logger.debug("[DeduplicatingOrchestrator] Emitting TextMessageEndEvent for: %s", msg_id)
                             yield TextMessageEndEvent(message_id=msg_id)
                         active_text_message_ids.clear()
                     
                     # Drop any pending (phantom) messages that never got content
                     if pending_start_events:
-                        logger.info("[DeduplicatingOrchestrator] Dropping %d phantom text messages (never got content): %s", 
-                                   len(pending_start_events), list(pending_start_events.keys()))
+                        logger.debug("[DeduplicatingOrchestrator] Dropping %d phantom text messages", len(pending_start_events))
                         pending_start_events.clear()
                     
-                    logger.info("[DeduplicatingOrchestrator] Emitting RunFinishedEvent")
+                    logger.debug("[DeduplicatingOrchestrator] RunFinished")
                 
                 yield event
         finally:

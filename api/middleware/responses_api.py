@@ -59,12 +59,10 @@ class ResponsesApiThreadMiddleware(ChatMiddleware):
         # Get the AG-UI thread_id from ContextVar (set by DeduplicatingOrchestrator)
         agui_thread_id = _current_agui_thread_id.get()
         
-        logger.info("[ResponsesApiThreadMiddleware] AG-UI thread_id from ContextVar: %s", agui_thread_id)
-        
         # Check if we have a stored response_id for this AG-UI thread
         if agui_thread_id and agui_thread_id in _thread_response_store:
             stored_response_id = _thread_response_store[agui_thread_id]
-            logger.info("[ResponsesApiThreadMiddleware] Using stored response_id: %s for AG-UI thread: %s", stored_response_id, agui_thread_id)
+            logger.debug("[ResponsesApiThreadMiddleware] Continuing thread %s with response_id %s", agui_thread_id, stored_response_id)
             # Set the conversation_id to the stored response_id
             context.chat_options.conversation_id = stored_response_id
             
@@ -73,7 +71,7 @@ class ResponsesApiThreadMiddleware(ChatMiddleware):
             self._filter_messages_for_api(context)
         elif agui_thread_id:
             # First request for this thread - clear any existing conversation_id
-            logger.info("[ResponsesApiThreadMiddleware] New conversation for AG-UI thread: %s", agui_thread_id)
+            logger.debug("[ResponsesApiThreadMiddleware] New conversation for thread %s", agui_thread_id)
             context.chat_options.conversation_id = None
         
         # Call the next middleware/handler
@@ -93,7 +91,7 @@ class ResponsesApiThreadMiddleware(ChatMiddleware):
             new_response_id = self._extract_response_id(context)
             if new_response_id and new_response_id.startswith(("resp_", "conv_")):
                 _thread_response_store[agui_thread_id] = new_response_id
-                logger.info("[ResponsesApiThreadMiddleware] Stored response_id: %s for AG-UI thread: %s", new_response_id, agui_thread_id)
+                logger.debug("[ResponsesApiThreadMiddleware] Stored response_id %s for thread %s", new_response_id, agui_thread_id)
     
     async def _capture_response_id(
         self,
@@ -114,7 +112,7 @@ class ResponsesApiThreadMiddleware(ChatMiddleware):
         if agui_thread_id and last_response_id:
             if last_response_id.startswith(("resp_", "conv_")):
                 _thread_response_store[agui_thread_id] = last_response_id
-                logger.info("[ResponsesApiThreadMiddleware] Stored response_id: %s for AG-UI thread: %s", last_response_id, agui_thread_id)
+                logger.debug("[ResponsesApiThreadMiddleware] Stored response_id %s for thread %s", last_response_id, agui_thread_id)
     
     def _extract_response_id(self, context: ChatContext) -> str | None:
         """Extract the response_id from the result."""
@@ -168,9 +166,7 @@ class ResponsesApiThreadMiddleware(ChatMiddleware):
             # Replace the messages list in-place
             context.messages.clear()
             context.messages.extend(filtered)
-            logger.info("[ResponsesApiThreadMiddleware] Filtered messages for API: %d -> %d (starting at %s message)",
-                       original_count, len(context.messages), 
-                       "tool" if getattr(filtered[0], 'role', None) == Role.TOOL else "user")
+            logger.debug("[ResponsesApiThreadMiddleware] Filtered messages: %d -> %d", original_count, len(context.messages))
 
 
 async def deduplicate_tool_calls(
@@ -243,4 +239,4 @@ async def deduplicate_tool_calls(
     if agui_thread_id and last_response_id:
         if last_response_id.startswith(("resp_", "conv_")):
             _thread_response_store[agui_thread_id] = last_response_id
-            logger.info("[Dedup] Stored response_id: %s for AG-UI thread: %s", last_response_id, agui_thread_id)
+            logger.debug("[Dedup] Stored response_id %s for thread %s", last_response_id, agui_thread_id)
