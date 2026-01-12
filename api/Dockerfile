@@ -35,6 +35,7 @@ COPY main.py ./
 COPY monitoring.py ./
 COPY agents/ ./agents/
 COPY middleware/ ./middleware/
+COPY data/ ./data/
 
 # Set environment variables
 ENV PATH="/app/.venv/bin:$PATH"
