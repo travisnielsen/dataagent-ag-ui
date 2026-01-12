@@ -55,6 +55,7 @@ bun.lockb
 venv
 .venv
 __pycache__
+*.egg-info/
 
 # vs code
 # .vscode/

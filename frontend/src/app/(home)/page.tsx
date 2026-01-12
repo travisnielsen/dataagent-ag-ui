@@ -8,7 +8,6 @@ import { AgentState } from "@/lib/types";
 import { useCoAgent, useCopilotAction } from "@copilotkit/react-core";
 import { CopilotKitCSSProperties, CopilotChat } from "@copilotkit/react-ui";
 import { useState } from "react";
-
 export default function CopilotKitPage() {
   const [themeColor, setThemeColor] = useState("#6366f1");
 
@@ -42,7 +41,8 @@ export default function CopilotKitPage() {
       <nav className="h-16 px-6 flex items-center justify-between border-b border-gray-700 flex-shrink-0">
         <div className="flex items-center gap-6">
           <span className="text-xl font-bold text-white">🪁 CopilotKit</span>
-          <a href="#" className="text-gray-300 hover:text-white transition-colors">Home</a>
+          <a href="/" className="text-white font-medium transition-colors">Home</a>
+          <a href="/logistics" className="text-gray-300 hover:text-white transition-colors">Logistics</a>
           <a href="#" className="text-gray-300 hover:text-white transition-colors">Docs</a>
           <a href="#" className="text-gray-300 hover:text-white transition-colors">About</a>
         </div>
@@ -58,6 +58,7 @@ export default function CopilotKitPage() {
           {/* Chat panel - 30% */}
           <div className="w-[30%] h-full border border-gray-700 rounded-xl shadow-lg overflow-hidden flex-shrink-0">
             <CopilotChat
+              id="home-chat"
               className="h-full"
               labels={{
                 title: "Chat Assistant",

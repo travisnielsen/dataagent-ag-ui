@@ -4,4 +4,4 @@
 cd "$(dirname "$0")/../api" || exit 1
 
 # Run the agent using uv
-uv run src/main.py
+uv run main.py

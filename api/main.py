@@ -5,67 +5,65 @@ import logging
 from contextlib import asynccontextmanager
 
 import uvicorn
-from azure.identity import DefaultAzureCredential
 from azure.identity.aio import DefaultAzureCredential as AsyncDefaultAzureCredential
 from agent_framework._clients import ChatClientProtocol
-from agent_framework.azure._chat_client import AzureOpenAIChatClient
-from agent_framework.azure import AzureAIAgentClient # type: ignore
-from agent_framework.openai import OpenAIChatClient
+from agent_framework import azure as _azure
 from agent_framework_ag_ui import add_agent_framework_fastapi_endpoint
 from dotenv import load_dotenv
-from fastapi import FastAPI, Depends, Request
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, Request
 
-from agent import create_agent # type: ignore
-from auth import azure_scheme, azure_ad_settings, AzureADAuthMiddleware # type: ignore
+from fastapi.middleware.cors import CORSMiddleware
+from agents import create_agent, create_logistics_agent  # type: ignore
+from middleware import (  # type: ignore
+    ResponsesApiThreadMiddleware,
+    azure_scheme,
+    azure_ad_settings,
+    AzureADAuthMiddleware,
+)
+from monitoring import configure_observability, is_observability_enabled  # type: ignore
+
+# Use AzureAIClient (v2/Responses API) for Foundry Agent Service
+# The ResponsesApiThreadMiddleware handles thread ID management for stateful conversations
+AzureAIClient = _azure.AzureAIClient
 
 load_dotenv()
+
+# Configure logging to show INFO level from our modules
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)s:%(name)s:%(message)s"
+)
+# Reduce noise from azure/httpx libraries
+logging.getLogger("azure").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+# Reduce agent_framework verbosity (it logs all message content at INFO level)
+logging.getLogger("agent_framework").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
 # Check if Azure AD authentication is configured
 AUTH_ENABLED = bool(azure_ad_settings.AZURE_AD_CLIENT_ID and azure_ad_settings.AZURE_AD_TENANT_ID)
 
-def _build_chat_client() -> ChatClientProtocol:
-    """
-    Build the appropriate chat client based on environment configuration.
-    
-    Set USE_FOUNDRY_AGENT=true to use AzureAIAgentClient (enables Foundry integration, threads).
-    Otherwise, uses AzureOpenAIChatClient (stateless, no Foundry integration).
-    """
-    use_foundry = os.getenv("USE_FOUNDRY_AGENT", "false").lower() == "true"
-    
-    try:
-        if use_foundry and os.getenv("AZURE_AI_PROJECT_ENDPOINT"):
-            # Azure AI Foundry Agent - enables thread management and Foundry visibility
-            # Uses async credential for async operations
-            # 
-            # NOTE: AzureAIAgentClient creates a new Foundry thread for each request
-            # when no thread_id is provided. For stateless operation (like AG-UI where
-            # thread state is managed by the protocol), we need AzureOpenAIChatClient.
-            # The AzureAIAgentClient is meant for scenarios where you want Foundry's
-            # built-in thread management.
-            # see: https://github.com/microsoft/agent-framework/issues/2479
-            logger.warning(
-                "AzureAIAgentClient creates new Foundry threads per request. "
-                "For stateless AG-UI operation, consider using AzureOpenAIChatClient instead."
-            )
-            return AzureAIAgentClient(
-                credential=AsyncDefaultAzureCredential(),
-                project_endpoint=os.getenv("AZURE_AI_PROJECT_ENDPOINT"),
-                model_deployment_name=os.getenv("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4o-mini"),
-            )
-        elif bool(os.getenv("AZURE_OPENAI_ENDPOINT")):
-            # Azure OpenAI Chat - stateless, no Foundry integration
-            # Uses sync credential
-            logger.info("Using AzureOpenAIChatClient (stateless mode)")
-            return AzureOpenAIChatClient(
-                credential=DefaultAzureCredential(),
-                endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
-                deployment_name=os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME", "gpt-4o-mini"),
-            )
+# Configure observability before creating the app
+configure_observability()
 
-        raise ValueError("Either AZURE_OPENAI_PROJECT_ENDPOINT or AZURE_OPENAI_ENDPOINT environment variable is required")
+def _build_chat_client() -> ChatClientProtocol:
+    """Build the AzureAIClient for Foundry Agent Service v2 (Responses API)."""
+    try:
+        project_endpoint = os.getenv("AZURE_AI_PROJECT_ENDPOINT")
+        if not project_endpoint:
+            raise ValueError("AZURE_AI_PROJECT_ENDPOINT environment variable is required")
+        
+        logger.info("Using AzureAIClient (Foundry Agent Service v2 / Responses API)")
+        client = AzureAIClient(
+            credential=AsyncDefaultAzureCredential(),
+            project_endpoint=project_endpoint,
+            model_deployment_name=os.getenv("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4o-mini"),
+        )
+        # Add middleware to manage response ID -> thread ID mapping for v2 Responses API
+        client.middleware = ResponsesApiThreadMiddleware()
+        return client
 
     except Exception as exc:  # pragma: no cover
         raise RuntimeError(
@@ -75,6 +73,7 @@ def _build_chat_client() -> ChatClientProtocol:
 
 chat_client = _build_chat_client()
 my_agent = create_agent(chat_client)
+logistics_agent = create_logistics_agent(chat_client)
 
 
 @asynccontextmanager
@@ -83,6 +82,13 @@ async def lifespan(_app: FastAPI):
     Application lifespan handler.
     Loads Azure AD OpenID configuration on startup if auth is enabled.
     """
+    # Log observability status
+    if is_observability_enabled():
+        logger.info("OpenTelemetry observability is ENABLED")
+    else:
+        logger.info("OpenTelemetry observability is disabled (set ENABLE_INSTRUMENTATION=true to enable)")
+    
+    # Log authentication status
     if AUTH_ENABLED:
         logger.info("Azure AD authentication is ENABLED")
         if azure_scheme:
@@ -94,6 +100,9 @@ async def lifespan(_app: FastAPI):
         logger.warning("Set AZURE_AD_CLIENT_ID and AZURE_AD_TENANT_ID to enable auth.")
         logger.warning("=" * 60)
     yield
+    
+    # Shutdown: Cleanup
+    logger.info("Application shutdown complete")
 
 
 app = FastAPI(
@@ -145,6 +154,12 @@ add_agent_framework_fastapi_endpoint(
     app=app,
     agent=my_agent,
     path="/",
+)
+
+add_agent_framework_fastapi_endpoint(
+    app=app,
+    agent=logistics_agent,
+    path="/logistics",
 )
 
 if __name__ == "__main__":

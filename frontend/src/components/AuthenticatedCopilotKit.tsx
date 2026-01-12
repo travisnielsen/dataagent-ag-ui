@@ -6,14 +6,25 @@ import { useIsAuthenticated, useMsal } from "@azure/msal-react";
 import { loginRequest } from "@/lib/msalConfig";
 import { useEffect } from "react";
 
+interface AuthenticatedCopilotKitProps {
+  children: React.ReactNode;
+  /** The agent name to use - must match a key in the CopilotRuntime agents config */
+  agentName?: string;
+}
+
 /**
  * CopilotKit wrapper that passes the access token to the runtime.
  * This component must be rendered inside MsalProvider context.
  */
-export function AuthenticatedCopilotKit({ children }: { children: React.ReactNode }) {
+export function AuthenticatedCopilotKit({ children, agentName = "my_agent" }: AuthenticatedCopilotKitProps) {
   const { accessToken, isLoading, error } = useAccessToken();
   const isAuthenticated = useIsAuthenticated();
   const { instance } = useMsal();
+
+  // Debug: Log when agent name changes
+  useEffect(() => {
+    console.log(`[AuthenticatedCopilotKit] Agent name: ${agentName}`);
+  }, [agentName]);
 
   // If there's an auth error or no token when authenticated, prompt for login
   useEffect(() => {
@@ -74,10 +85,12 @@ export function AuthenticatedCopilotKit({ children }: { children: React.ReactNod
     Authorization: `Bearer ${accessToken}`,
   };
 
+  // Use key prop to force remount when agent changes (e.g., navigating between pages)
   return (
     <CopilotKit
+      key={agentName}
       runtimeUrl="/api/copilotkit"
-      agent="my_agent"
+      agent={agentName}
       headers={headers}
     >
       {children}

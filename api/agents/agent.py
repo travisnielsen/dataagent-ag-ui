@@ -1,3 +1,10 @@
+"""
+CopilotKit Demo Agent with Microsoft Agent Framework
+
+This module defines the agent configuration, tools, and state schema
+for the CopilotKit proverbs demo backed by v2 Responses API.
+"""
+
 from __future__ import annotations
 
 from textwrap import dedent
@@ -5,7 +12,11 @@ from typing import Annotated
 
 from agent_framework import ChatAgent, ChatClientProtocol, ai_function
 from agent_framework_ag_ui import AgentFrameworkAgent
+from agent_framework_ag_ui._orchestrators import HumanInTheLoopOrchestrator
 from pydantic import Field
+
+from middleware import DeduplicatingOrchestrator
+
 
 STATE_SCHEMA: dict[str, object] = {
     "proverbs": {
@@ -73,7 +84,7 @@ def go_to_moon() -> str:
 def create_agent(chat_client: ChatClientProtocol) -> AgentFrameworkAgent:
     """Instantiate the CopilotKit demo agent backed by Microsoft Agent Framework."""
     base_agent = ChatAgent(
-        name="proverbs_agent",
+        name="proverbs-agent",
         instructions=dedent(
             """
             You help users brainstorm, organize, and refine proverbs while coordinating UI updates.
@@ -118,4 +129,13 @@ def create_agent(chat_client: ChatClientProtocol) -> AgentFrameworkAgent:
         state_schema=STATE_SCHEMA,
         predict_state_config=PREDICT_STATE_CONFIG,
         require_confirmation=False,  # Allow immediate state updates with follow-up messages
+        # v2 Responses API: use_service_thread=False because:
+        # - CopilotKit/AG-UI manages conversation history on the client side
+        # - The ResponsesApiThreadMiddleware on the chat client handles response_id mapping
+        #   so conversations are still persisted server-side via response chaining
+        use_service_thread=False,
+        orchestrators=[
+            HumanInTheLoopOrchestrator(),  # Handle tool approval responses
+            DeduplicatingOrchestrator(),   # Handle regular messages with tool call deduplication
+        ],
     )

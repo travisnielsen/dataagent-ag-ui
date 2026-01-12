@@ -1,16 +1,16 @@
 "use client";
 
-import { CopilotKit } from "@copilotkit/react-core";
 import { MsalAuthProvider } from "@/components/MsalAuthProvider";
-import { AuthenticatedCopilotKit } from "@/components/AuthenticatedCopilotKit";
 
+/**
+ * Root providers for the application.
+ * Note: CopilotKit is NOT included here - each page should wrap its content
+ * with AuthenticatedCopilotKit to specify which agent to use.
+ */
 export function Providers({ children }: { children: React.ReactNode }) {
   return (
     <MsalAuthProvider>
-      <AuthenticatedCopilotKit>
-        {children}
-      </AuthenticatedCopilotKit>
+      {children}
     </MsalAuthProvider>
   );
 }
-
