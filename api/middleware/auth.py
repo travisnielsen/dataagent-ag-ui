@@ -44,6 +44,8 @@ PUBLIC_PATHS = {
     "/",
     "/health",
     "/info",
+    "/agent",
+    "/agent/info",
     "/logistics/info",
     "/docs",
     "/openapi.json",

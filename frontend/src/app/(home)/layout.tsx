@@ -8,7 +8,7 @@ export default function HomeLayout({
   children: React.ReactNode;
 }) {
   return (
-    <AuthenticatedCopilotKit agentName="my_agent">
+    <AuthenticatedCopilotKit>
       {children}
     </AuthenticatedCopilotKit>
   );

@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 
 from fastapi.middleware.cors import CORSMiddleware
-from agents import create_agent, create_logistics_agent  # type: ignore
+from agents import create_logistics_agent  # type: ignore
 from middleware import (  # type: ignore
     ResponsesApiThreadMiddleware,
     azure_scheme,
@@ -72,7 +72,6 @@ def _build_chat_client() -> ChatClientProtocol:
 
 
 chat_client = _build_chat_client()
-my_agent = create_agent(chat_client)
 logistics_agent = create_logistics_agent(chat_client)
 
 
@@ -137,31 +136,6 @@ async def health_check():
     return {"status": "healthy"}
 
 
-@app.get("/info")
-@app.post("/info")
-async def get_runtime_info():
-    """
-    CopilotKit runtime info endpoint for agent discovery.
-    Returns information about available agents.
-    """
-    return {
-        "version": "0.1.0",
-        "agents": {
-            "my_agent": {
-                "name": "my_agent",
-                "description": "General purpose agent",
-                "className": "Agent"
-            },
-            "logistics_agent": {
-                "name": "logistics_agent",
-                "description": "Logistics and shipping agent",
-                "className": "LogisticsAgent"
-            }
-        },
-        "audioFileTranscriptionEnabled": False
-    }
-
-
 @app.get("/me")
 async def get_current_user(request: Request):
     """
@@ -178,12 +152,8 @@ async def get_current_user(request: Request):
     }
 
 
-add_agent_framework_fastapi_endpoint(
-    app=app,
-    agent=my_agent,
-    path="/agent",
-)
-
+# Add the AG-UI endpoint for the logistics agent
+# Mounted at /logistics to match the working configuration
 add_agent_framework_fastapi_endpoint(
     app=app,
     agent=logistics_agent,

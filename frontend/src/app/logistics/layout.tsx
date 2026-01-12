@@ -8,7 +8,7 @@ export default function LogisticsLayout({
   children: React.ReactNode;
 }) {
   return (
-    <AuthenticatedCopilotKit agentName="logistics_agent">
+    <AuthenticatedCopilotKit>
       {children}
     </AuthenticatedCopilotKit>
   );

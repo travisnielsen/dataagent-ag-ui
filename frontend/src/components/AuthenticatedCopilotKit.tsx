@@ -1,62 +1,23 @@
 "use client";
 
 import { CopilotKit } from "@copilotkit/react-core";
-import { HttpAgent } from "@ag-ui/client";
 import { useAccessToken } from "@/lib/useAccessToken";
 import { useIsAuthenticated, useMsal } from "@azure/msal-react";
 import { loginRequest } from "@/lib/msalConfig";
-import { useEffect, useMemo } from "react";
-
-// API URL Configuration - uses environment variables with fallbacks
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
 
 interface AuthenticatedCopilotKitProps {
   children: React.ReactNode;
-  /** The agent name to use - must match a key in the CopilotRuntime agents config */
-  agentName?: string;
 }
 
 /**
- * CopilotKit wrapper that passes the access token to the runtime.
+ * CopilotKit wrapper for the logistics agent with Azure AD authentication.
  * This component must be rendered inside MsalProvider context.
+ * Uses Next.js API route as a proxy to forward requests with auth headers.
  */
-export function AuthenticatedCopilotKit({ children, agentName = "my_agent" }: AuthenticatedCopilotKitProps) {
-  const { accessToken, isLoading, error } = useAccessToken();
+export function AuthenticatedCopilotKit({ children }: AuthenticatedCopilotKitProps) {
+  const { accessToken, isLoading } = useAccessToken();
   const isAuthenticated = useIsAuthenticated();
   const { instance } = useMsal();
-
-  // Debug: Log when agent name changes
-  useEffect(() => {
-    console.log(`[AuthenticatedCopilotKit] Agent name: ${agentName}`);
-  }, [agentName]);
-
-  // If there's an auth error or no token when authenticated, prompt for login
-  useEffect(() => {
-    if (error) {
-      console.error("Token acquisition error:", error);
-    }
-  }, [error]);
-
-  // Create agents that point directly to the backend API
-  // This must be called before any conditional returns to satisfy React's hook rules
-  const agents = useMemo(() => {
-    if (!accessToken) return null;
-    
-    const headers: Record<string, string> = {
-      Authorization: `Bearer ${accessToken}`,
-    };
-    
-    return {
-      my_agent: new HttpAgent({
-        url: `${API_BASE_URL}/agent`,
-        headers,
-      }),
-      logistics_agent: new HttpAgent({
-        url: `${API_BASE_URL}/logistics`,
-        headers,
-      }),
-    };
-  }, [accessToken]);
 
   // Force sign-in if not authenticated
   const handleSignIn = async () => {
@@ -71,7 +32,7 @@ export function AuthenticatedCopilotKit({ children, agentName = "my_agent" }: Au
   if (!isAuthenticated) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-gray-400 gap-4">
-        <span>Please sign in to use the agent</span>
+        <span>Please sign in to use the logistics agent</span>
         <button
           onClick={handleSignIn}
           className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
@@ -92,7 +53,7 @@ export function AuthenticatedCopilotKit({ children, agentName = "my_agent" }: Au
   }
 
   // If authenticated but no token (error state), show retry option
-  if (!accessToken || !agents) {
+  if (!accessToken) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-gray-400 gap-4">
         <span>Unable to acquire access token</span>
@@ -106,15 +67,17 @@ export function AuthenticatedCopilotKit({ children, agentName = "my_agent" }: Au
     );
   }
 
-  // Use key prop to force remount when agent changes (e.g., navigating between pages)
-  // runtimeUrl is required by CopilotKit even with agents__unsafe_dev_only
-  // We point it to the backend but the local agents will be used instead
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${accessToken}`,
+  };
+
+  // Use Next.js API route as a proxy to the backend
+  // The proxy forwards requests to /logistics on the backend
   return (
     <CopilotKit
-      key={`${agentName}-${accessToken}`}
-      runtimeUrl={API_BASE_URL}
-      agent={agentName}
-      agents__unsafe_dev_only={agents}
+      runtimeUrl="/api/copilotkit"
+      agent="logistics_agent"
+      headers={headers}
     >
       {children}
     </CopilotKit>

@@ -456,7 +456,7 @@ def create_logistics_agent(chat_client: ChatClientProtocol) -> AgentFrameworkAge
 
     return AgentFrameworkAgent(
         agent=base_agent,
-        name="CopilotKitLogisticsAgent",
+        name="logistics_agent",
         description="Manages shipping logistics data, flight payloads, and utilization analysis.",
         state_schema=STATE_SCHEMA,
         predict_state_config=PREDICT_STATE_CONFIG,
