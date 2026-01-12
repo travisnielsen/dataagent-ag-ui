@@ -81,8 +81,11 @@ class AzureADAuthMiddleware(BaseHTTPMiddleware):
         logger.info(f"Azure AD Auth configured with issuers: {self.valid_issuers}")
     
     async def dispatch(self, request: Request, call_next):
+        # Normalize path by removing trailing slash for comparison
+        path = request.url.path.rstrip("/") or "/"
+        
         # Skip auth for public paths
-        if request.url.path in PUBLIC_PATHS:
+        if path in PUBLIC_PATHS:
             return await call_next(request)
         
         # Skip auth for OPTIONS requests (CORS preflight)
