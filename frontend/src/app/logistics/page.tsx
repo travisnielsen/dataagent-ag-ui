@@ -52,14 +52,14 @@ export default function LogisticsPage() {
         </div>
       </nav>
 
-      {/* Two-column layout: Dashboard (70%) + Chat (30%) - swapped from home page */}
-      <div className="flex justify-center items-center px-12 py-6" style={{ height: 'calc(100vh - 4rem)' }}>
-        <div className="w-full max-w-7xl h-full flex gap-6">
-          {/* Dashboard panel - 70% */}
+      {/* Two-column layout: Dashboard (70%) + Chat (30%) - responsive on smaller screens */}
+      <div className="flex justify-center items-center px-4 md:px-12 py-4 md:py-6" style={{ height: 'calc(100vh - 4rem)' }}>
+        <div className="w-full max-w-7xl h-full flex flex-col lg:flex-row gap-4 md:gap-6">
+          {/* Dashboard panel - 70% on large screens, full width on smaller */}
           <LogisticsDashboard themeColor={themeColor} />
 
-          {/* Chat panel - 30% */}
-          <div className="w-[30%] h-full border border-gray-700 rounded-xl shadow-lg overflow-hidden flex-shrink-0">
+          {/* Chat panel - 30% on large screens, full width on smaller */}
+          <div className="w-full lg:w-[30%] h-[40vh] lg:h-full border border-gray-700 rounded-xl shadow-lg overflow-hidden flex-shrink-0">
             <CopilotChat
               className="h-full"
               labels={{
@@ -107,7 +107,7 @@ export default function LogisticsPage() {
 function LogisticsDashboard({ themeColor }: { themeColor: string }) {
   // Local state for UI controls to avoid controlled/uncontrolled issues
   const [highlightRisks, setHighlightRisks] = useState(true);
-  const [maxFlights, setMaxFlights] = useState(10);
+  const [maxFlights, setMaxFlights] = useState(5);
 
   // 🪁 Shared State: https://docs.copilotkit.ai/microsoft-agent-framework/shared-state
   const { state, setState } = useCoAgent<LogisticsAgentState>({
@@ -360,26 +360,26 @@ function LogisticsDashboard({ themeColor }: { themeColor: string }) {
   return (
     <div
       style={{ backgroundColor: `${themeColor}15` }}
-      className="w-[70%] h-full rounded-xl shadow-lg overflow-auto p-6 transition-colors duration-300 border border-gray-700"
+      className="w-full lg:w-[70%] h-[55vh] lg:h-full rounded-xl shadow-lg overflow-auto p-4 md:p-6 transition-colors duration-300 border border-gray-700"
     >
-      <div className="flex flex-col gap-6 h-full">
+      <div className="flex flex-col gap-4 md:gap-6 h-full">
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0">
           <div>
-            <h1 className="text-2xl font-bold text-white flex items-center gap-2">
+            <h1 className="text-xl md:text-2xl font-bold text-white flex items-center gap-2">
               ✈️ Shipping Logistics Dashboard
             </h1>
-            <p className="text-gray-400 text-sm mt-1">
+            <p className="text-gray-400 text-xs md:text-sm mt-1">
               Real-time flight payload monitoring and utilization analysis
             </p>
           </div>
-          <div className="flex items-center gap-4">
-            <label className="flex items-center gap-2 text-sm text-gray-300">
+          <div className="flex items-center gap-3 md:gap-4 flex-wrap">
+            <label className="flex items-center gap-2 text-xs md:text-sm text-gray-300">
               <span>Show</span>
               <select
                 value={maxFlights}
                 onChange={(e) => setMaxFlights(Number(e.target.value))}
-                className="bg-gray-700 border border-gray-600 text-white text-sm rounded px-2 py-1 focus:ring-sky-500 focus:border-sky-500"
+                className="bg-gray-700 border border-gray-600 text-white text-xs md:text-sm rounded px-2 py-1 focus:ring-sky-500 focus:border-sky-500"
               >
                 <option value={5}>5</option>
                 <option value={10}>10</option>
@@ -388,7 +388,7 @@ function LogisticsDashboard({ themeColor }: { themeColor: string }) {
               </select>
               <span>flights</span>
             </label>
-            <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
+            <label className="flex items-center gap-2 text-xs md:text-sm text-gray-300 cursor-pointer">
               <input
                 type="checkbox"
                 checked={highlightRisks}
@@ -430,7 +430,7 @@ function LogisticsDashboard({ themeColor }: { themeColor: string }) {
         )}
 
         {/* Main Content Area */}
-        <div className="flex-1 flex flex-col gap-6 overflow-auto">
+        <div className="flex-1 flex flex-col gap-6 overflow-auto min-h-0">
           {/* Flight List - Hidden when a flight is selected */}
           {!state.selectedFlight && (
             <FlightListCard
@@ -440,6 +440,7 @@ function LogisticsDashboard({ themeColor }: { themeColor: string }) {
               highlightRisks={highlightRisks}
               themeColor={themeColor}
               pageSize={maxFlights}
+              minItems={5}
             />
           )}
 

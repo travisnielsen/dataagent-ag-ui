@@ -9,6 +9,7 @@ interface FlightListCardProps {
   highlightRisks: boolean;
   themeColor: string;
   pageSize?: number;
+  minItems?: number;
 }
 
 export function FlightListCard({ 
@@ -17,8 +18,11 @@ export function FlightListCard({
   onSelectFlight, 
   highlightRisks,
   themeColor,
-  pageSize = 10
+  pageSize = 5,
+  minItems = 5
 }: FlightListCardProps) {
+  // Ensure we show at least minItems if available
+  const effectivePageSize = Math.max(pageSize, Math.min(minItems, flights?.length || 0));
   const [currentPage, setCurrentPage] = useState(1);
   
   if (!flights || flights.length === 0) {
@@ -40,9 +44,9 @@ export function FlightListCard({
   });
 
   const totalFlights = sortedFlights.length;
-  const totalPages = Math.ceil(totalFlights / pageSize);
-  const startIndex = (currentPage - 1) * pageSize;
-  const endIndex = Math.min(startIndex + pageSize, totalFlights);
+  const totalPages = Math.ceil(totalFlights / effectivePageSize);
+  const startIndex = (currentPage - 1) * effectivePageSize;
+  const endIndex = Math.min(startIndex + effectivePageSize, totalFlights);
   const displayedFlights = sortedFlights.slice(startIndex, endIndex);
 
   const goToPage = (page: number) => {
@@ -50,15 +54,15 @@ export function FlightListCard({
   };
 
   return (
-    <div className="bg-white/10 backdrop-blur-md rounded-xl p-4 w-full overflow-hidden">
-      <div className="flex items-center justify-between mb-3">
+    <div className="bg-white/10 backdrop-blur-md rounded-xl p-4 w-full overflow-hidden flex flex-col flex-shrink-0" style={{ minHeight: '360px' }}>
+      <div className="flex items-center justify-between mb-3 flex-shrink-0">
         <h2 className="text-xl font-bold text-white">Flight Shipments</h2>
-        <span className="text-sm text-gray-300">
+        <span className="text-sm text-gray-300 whitespace-nowrap">
           Showing {startIndex + 1}-{endIndex} of {totalFlights} flights
         </span>
       </div>
       
-      <div className="overflow-x-auto">
+      <div className="overflow-x-auto flex-1">
         <table className="w-full text-left">
           <thead>
             <tr className="border-b border-white/20">
