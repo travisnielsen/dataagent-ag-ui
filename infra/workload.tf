@@ -603,6 +603,10 @@ resource "azurerm_container_app" "api" {
         name  = "ENABLE_SENSITIVE_DATA"
         value = "true"
       }
+      env {
+        name  = "AUTH_DISABLED"
+        value = tostring(var.auth_disabled)
+      }
     }
   }
 

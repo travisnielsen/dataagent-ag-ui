@@ -3,7 +3,11 @@
 import { useMsal, useIsAuthenticated } from "@azure/msal-react";
 import { loginRequest } from "@/lib/msalConfig";
 
-export function AuthButton() {
+/**
+ * Internal component that uses MSAL hooks.
+ * Must only be rendered when MsalProvider is present.
+ */
+function AuthButtonWithMsal() {
   const { instance, accounts } = useMsal();
   const isAuthenticated = useIsAuthenticated();
 
@@ -51,4 +55,27 @@ export function AuthButton() {
       Sign In
     </button>
   );
+}
+
+/**
+ * Auth button component that handles sign in/out.
+ * When AUTH_DISABLED is set, shows a "No Auth Mode" indicator instead.
+ */
+export function AuthButton() {
+  // Check if authentication is disabled via environment variable
+  const isAuthDisabled = process.env.NEXT_PUBLIC_AUTH_DISABLED === "true";
+
+  // When auth is disabled, show a simple "No Auth" indicator
+  if (isAuthDisabled) {
+    return (
+      <span className="text-gray-400 flex items-center gap-2">
+        <span className="w-8 h-8 rounded-full bg-gray-600 flex items-center justify-center text-white text-sm font-medium">
+          ?
+        </span>
+        <span>No Auth Mode</span>
+      </span>
+    );
+  }
+
+  return <AuthButtonWithMsal />;
 }

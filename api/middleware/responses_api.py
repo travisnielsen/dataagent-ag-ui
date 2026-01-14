@@ -81,7 +81,7 @@ class ResponsesApiThreadMiddleware(ChatMiddleware):
         agui_thread_id = _current_agui_thread_id.get()
         
         # Log incoming messages for debugging
-        logger.info("[ResponsesApiThreadMiddleware] Incoming messages: %d", len(context.messages) if context.messages else 0)
+        logger.debug("[ResponsesApiThreadMiddleware] Incoming messages: %d", len(context.messages) if context.messages else 0)
         for i, msg in enumerate(context.messages or []):
             role = getattr(msg, 'role', 'unknown')
             contents_info = []
@@ -99,7 +99,7 @@ class ResponsesApiThreadMiddleware(ChatMiddleware):
         # Check if we have a stored response_id for this AG-UI thread
         if agui_thread_id and agui_thread_id in _thread_response_store:
             stored_response_id = _thread_response_store[agui_thread_id]
-            logger.info("[ResponsesApiThreadMiddleware] CONTINUING thread %s with response_id %s", agui_thread_id, stored_response_id)
+            logger.debug("[ResponsesApiThreadMiddleware] CONTINUING thread %s with response_id %s", agui_thread_id, stored_response_id)
             # Set the conversation_id to the stored response_id
             context.chat_options.conversation_id = stored_response_id
             
@@ -109,14 +109,14 @@ class ResponsesApiThreadMiddleware(ChatMiddleware):
         elif agui_thread_id:
             # First request for this thread OR we cleared the response_id (e.g., after frontend tool)
             # Still need to filter out tool-related messages that CopilotKit may have sent
-            logger.info("[ResponsesApiThreadMiddleware] NEW/FRESH conversation for thread %s", agui_thread_id)
+            logger.debug("[ResponsesApiThreadMiddleware] NEW/FRESH conversation for thread %s", agui_thread_id)
             context.chat_options.conversation_id = None
             
             # Filter out tool calls/results that would cause call_id_to_id errors
             # This removes TOOL messages and ASSISTANT messages with FunctionCallContent
             self._filter_messages_for_fresh_start(context)
         
-        logger.info("[ResponsesApiThreadMiddleware] After filtering: %d messages", len(context.messages) if context.messages else 0)
+        logger.debug("[ResponsesApiThreadMiddleware] After filtering: %d messages", len(context.messages) if context.messages else 0)
         
         # Call the next middleware/handler
         await next(context)
@@ -174,7 +174,7 @@ class ResponsesApiThreadMiddleware(ChatMiddleware):
         if ended_with_frontend:
             # STORE the response_id - Azure is waiting for the tool result
             # When CopilotKit sends the result back, we'll continue the conversation
-            logger.info("[ResponsesApiThreadMiddleware] Response ended with frontend tool '%s' - STORING response_id for continuation", last_tool_name)
+            logger.debug("[ResponsesApiThreadMiddleware] Response ended with frontend tool '%s' - STORING response_id for continuation", last_tool_name)
             if agui_thread_id and last_response_id:
                 if last_response_id.startswith(("resp_", "conv_")):
                     _thread_response_store[agui_thread_id] = last_response_id
@@ -228,7 +228,7 @@ class ResponsesApiThreadMiddleware(ChatMiddleware):
             # Azure is waiting for this to continue the conversation
             context.messages.clear()
             context.messages.append(last_msg)
-            logger.info("[ResponsesApiThreadMiddleware] Continuation: sending tool result only: %d -> %d", original_count, len(context.messages))
+            logger.debug("[ResponsesApiThreadMiddleware] Continuation: sending tool result only: %d -> %d", original_count, len(context.messages))
             return
         
         # Find the last user message - that's what we need for a normal continuation
@@ -245,7 +245,7 @@ class ResponsesApiThreadMiddleware(ChatMiddleware):
             last_user_msg = messages[last_user_idx]
             context.messages.clear()
             context.messages.append(last_user_msg)
-            logger.info("[ResponsesApiThreadMiddleware] Continuation: sending last user message only: %d -> %d", original_count, len(context.messages))
+            logger.debug("[ResponsesApiThreadMiddleware] Continuation: sending last user message only: %d -> %d", original_count, len(context.messages))
     
     def _filter_messages_for_fresh_start(self, context: ChatContext) -> None:
         """Filter messages for a fresh conversation start.
@@ -268,7 +268,7 @@ class ResponsesApiThreadMiddleware(ChatMiddleware):
         original_count = len(messages)
         filtered = []
         
-        logger.info("[ResponsesApiThreadMiddleware] _filter_messages_for_fresh_start: examining %d messages", original_count)
+        logger.debug("[ResponsesApiThreadMiddleware] _filter_messages_for_fresh_start: examining %d messages", original_count)
         
         for i, msg in enumerate(messages):
             role = getattr(msg, 'role', None)
@@ -284,7 +284,7 @@ class ResponsesApiThreadMiddleware(ChatMiddleware):
                         contents_info.append(f"{c_type}(call_id={call_id[:12]}...)")
                     else:
                         contents_info.append(c_type)
-            logger.info("[ResponsesApiThreadMiddleware]   msg[%d]: role=%s, contents=%s", i, role, contents_info)
+            logger.debug("[ResponsesApiThreadMiddleware]   msg[%d]: role=%s, contents=%s", i, role, contents_info)
             
             # Always keep user messages
             if role == Role.USER:
@@ -294,7 +294,7 @@ class ResponsesApiThreadMiddleware(ChatMiddleware):
             
             # Skip tool messages entirely
             if role == Role.TOOL:
-                logger.info("[ResponsesApiThreadMiddleware]     -> REMOVE (tool role)")
+                logger.debug("[ResponsesApiThreadMiddleware]     -> REMOVE (tool role)")
                 continue
             
             # For assistant messages, check if they contain tool calls or tool results
@@ -313,7 +313,7 @@ class ResponsesApiThreadMiddleware(ChatMiddleware):
                             break
                 
                 if has_tool_related:
-                    logger.info("[ResponsesApiThreadMiddleware]     -> REMOVE (assistant with tool call/result)")
+                    logger.debug("[ResponsesApiThreadMiddleware]     -> REMOVE (assistant with tool call/result)")
                     continue
                 
                 # Keep pure text assistant messages
@@ -328,7 +328,7 @@ class ResponsesApiThreadMiddleware(ChatMiddleware):
         if len(filtered) != original_count:
             context.messages.clear()
             context.messages.extend(filtered)
-            logger.info("[ResponsesApiThreadMiddleware] Fresh start filter: %d -> %d messages", original_count, len(filtered))
+            logger.debug("[ResponsesApiThreadMiddleware] Fresh start filter: %d -> %d messages", original_count, len(filtered))
 
 
 async def deduplicate_tool_calls(

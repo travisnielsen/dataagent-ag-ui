@@ -74,6 +74,23 @@ Next, create a new `.env.local` file within the `frontend` directory and populat
    NEXT_PUBLIC_AZURE_AD_TENANT_ID=your-tenant-id-here
    ```
 
+### Disabling Authentication (Development Only)
+
+For local development or testing purposes, you can disable authentication entirely by setting the `AUTH_DISABLED` environment variable on both the API and frontend.
+
+**API (.env file in the `api` folder):**
+   ```env
+   AUTH_DISABLED=true
+   ```
+
+**Frontend (.env.local file in the `frontend` folder):**
+   ```env
+   NEXT_PUBLIC_AUTH_DISABLED=true
+   ```
+
+> [!WARNING]
+> Do NOT use `AUTH_DISABLED=true` in production environments. This setting allows anonymous access to the API without any authentication or authorization checks.
+
 ### Start the development server
 
 The following commands can be used to start the enviroment locally:

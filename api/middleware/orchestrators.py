@@ -97,7 +97,7 @@ class DeduplicatingOrchestrator(Orchestrator):
         original_count = len(messages)
         filtered = []
         
-        logger.info("[DeduplicatingOrchestrator] Filtering messages for fresh start: %d messages", original_count)
+        logger.debug("[DeduplicatingOrchestrator] Filtering messages for fresh start: %d messages", original_count)
         
         for i, msg in enumerate(messages):
             # Get role - could be enum or string
@@ -117,7 +117,7 @@ class DeduplicatingOrchestrator(Orchestrator):
                         contents_info.append(f"{c_type}(call_id={call_id[:12]}...)")
                     else:
                         contents_info.append(c_type)
-            logger.info("[DeduplicatingOrchestrator]   msg[%d]: role=%s, contents=%s", i, role_value, contents_info)
+            logger.debug("[DeduplicatingOrchestrator]   msg[%d]: role=%s, contents=%s", i, role_value, contents_info)
             
             # Always keep user messages
             if role_value.lower() == 'user':
@@ -127,7 +127,7 @@ class DeduplicatingOrchestrator(Orchestrator):
             
             # Skip tool messages entirely
             if role_value.lower() == 'tool':
-                logger.info("[DeduplicatingOrchestrator]     -> REMOVE (tool role)")
+                logger.debug("[DeduplicatingOrchestrator]     -> REMOVE (tool role)")
                 continue
             
             # For assistant messages, check if they contain tool calls or results
@@ -145,7 +145,7 @@ class DeduplicatingOrchestrator(Orchestrator):
                             break
                 
                 if has_tool_related:
-                    logger.info("[DeduplicatingOrchestrator]     -> REMOVE (assistant with tool call/result)")
+                    logger.debug("[DeduplicatingOrchestrator]     -> REMOVE (assistant with tool call/result)")
                     continue
                 
                 # Keep pure text assistant messages
@@ -160,7 +160,7 @@ class DeduplicatingOrchestrator(Orchestrator):
         if len(filtered) != original_count:
             # Update context._messages directly (bypassing the property)
             context._messages = filtered
-            logger.info("[DeduplicatingOrchestrator] Filtered messages: %d -> %d", original_count, len(filtered))
+            logger.debug("[DeduplicatingOrchestrator] Filtered messages: %d -> %d", original_count, len(filtered))
     
     def _is_frontend_tool_result_only(self, context: ExecutionContext) -> bool:
         """Check if this request is just a tool result for a frontend-only tool.
@@ -209,7 +209,7 @@ class DeduplicatingOrchestrator(Orchestrator):
                                         if getattr(c2, 'call_id', None) == call_id:
                                             tool_name = getattr(c2, 'name', None)
                                             if tool_name in FRONTEND_ONLY_TOOLS:
-                                                logger.info("[DeduplicatingOrchestrator] Last message is result for frontend tool: %s", tool_name)
+                                                logger.debug("[DeduplicatingOrchestrator] Last message is result for frontend tool: %s", tool_name)
                                                 return True
         
         return False
@@ -243,7 +243,7 @@ class DeduplicatingOrchestrator(Orchestrator):
                 self._filter_messages_for_fresh_start(context, agui_thread_id, thread_response_store)
             
             if is_continuation:
-                logger.info("[DeduplicatingOrchestrator] CONTINUING conversation - will send tool result to Azure")
+                logger.debug("[DeduplicatingOrchestrator] CONTINUING conversation - will send tool result to Azure")
             else:
                 logger.debug("[DeduplicatingOrchestrator] NEW conversation")
             
@@ -269,7 +269,7 @@ class DeduplicatingOrchestrator(Orchestrator):
                 for field in FRONTEND_ONLY_STATE_FIELDS:
                     if field in incoming_state and incoming_state[field] is not None:
                         frontend_state[field] = incoming_state[field]
-                        logger.info("[DeduplicatingOrchestrator] Preserving frontend field '%s': %s", field, incoming_state[field])
+                        logger.debug("[DeduplicatingOrchestrator] Preserving frontend field '%s': %s", field, incoming_state[field])
             
             # Track text message lifecycle to ensure proper START/END pairing
             # Buffer START events until we see content - this filters out "tool-only response" placeholders
@@ -279,14 +279,14 @@ class DeduplicatingOrchestrator(Orchestrator):
             async for event in self._inner.run(context):
                 # Log all events for debugging
                 event_type = type(event).__name__
-                logger.info("[DeduplicatingOrchestrator] Event: %s", event_type)
+                logger.debug("[DeduplicatingOrchestrator] Event: %s", event_type)
                 
                 # --- StateSnapshotEvent - preserve and merge, then pass through ---
                 if isinstance(event, StateSnapshotEvent):
                     snapshot = event.snapshot or {}
                     flights_count = len(snapshot.get('flights', []))
                     historical_count = len(snapshot.get('historicalData', []))
-                    logger.info("[DeduplicatingOrchestrator] StateSnapshotEvent from inner: keys=%s, flights=%d, historical=%d",
+                    logger.debug("[DeduplicatingOrchestrator] StateSnapshotEvent from inner: keys=%s, flights=%d, historical=%d",
                                list(snapshot.keys()), flights_count, historical_count)
                     
                     # ALWAYS preserve the inner state - it may have fields we don't extract
@@ -303,7 +303,7 @@ class DeduplicatingOrchestrator(Orchestrator):
                     # 2. extracted state (from tool results)
                     # 3. frontend state (from incoming request - highest priority for frontend-only fields)
                     merged = {**last_inner_state, **extracted_state, **frontend_state}
-                    logger.info("[DeduplicatingOrchestrator] Merged state emitting: flights=%d, historical=%d, activeFilter=%s",
+                    logger.debug("[DeduplicatingOrchestrator] Merged state emitting: flights=%d, historical=%d, activeFilter=%s",
                                len(merged.get('flights', [])),
                                len(merged.get('historicalData', [])),
                                merged.get('activeFilter'))
@@ -315,7 +315,7 @@ class DeduplicatingOrchestrator(Orchestrator):
                     tool_call_id = event.tool_call_id
                     tool_name = event.tool_call_name
                     
-                    logger.info("[DeduplicatingOrchestrator] ToolCallStart: name=%s, id=%s", tool_name, tool_call_id[:12] if tool_call_id else "None")
+                    logger.debug("[DeduplicatingOrchestrator] ToolCallStart: name=%s, id=%s", tool_name, tool_call_id[:12] if tool_call_id else "None")
                     
                     # Check for duplicate first (applies to ALL tools, frontend and backend)
                     if tool_call_id in seen_tool_call_ids:
@@ -328,9 +328,9 @@ class DeduplicatingOrchestrator(Orchestrator):
                     
                     # Log ALL tool calls at INFO level to see what's happening
                     if tool_name in FRONTEND_ONLY_TOOLS:
-                        logger.info("[DeduplicatingOrchestrator] -> FRONTEND tool: %s", tool_name)
+                        logger.debug("[DeduplicatingOrchestrator] -> FRONTEND tool: %s", tool_name)
                     else:
-                        logger.info("[DeduplicatingOrchestrator] -> BACKEND tool: %s", tool_name)
+                        logger.debug("[DeduplicatingOrchestrator] -> BACKEND tool: %s", tool_name)
                 
                 elif isinstance(event, ToolCallArgsEvent):
                     tool_call_id = event.tool_call_id
@@ -374,7 +374,7 @@ class DeduplicatingOrchestrator(Orchestrator):
                         if args_str:
                             try:
                                 args = json.loads(args_str)
-                                logger.info("[DeduplicatingOrchestrator] Extracted filter_dashboard args: %s", args)
+                                logger.debug("[DeduplicatingOrchestrator] Extracted filter_dashboard args: %s", args)
                                 
                                 # Normalize route format like the frontend does
                                 route = args.get("route")
@@ -391,7 +391,7 @@ class DeduplicatingOrchestrator(Orchestrator):
                                         "utilizationType": utilization_type,
                                     }
                                     extracted_state["selectedRoute"] = route
-                                    logger.info("[DeduplicatingOrchestrator] Set extracted activeFilter: %s", extracted_state["activeFilter"])
+                                    logger.debug("[DeduplicatingOrchestrator] Set extracted activeFilter: %s", extracted_state["activeFilter"])
                                 else:
                                     # Clear filter
                                     extracted_state["activeFilter"] = None
@@ -403,7 +403,7 @@ class DeduplicatingOrchestrator(Orchestrator):
                                 # Emit a StateSnapshotEvent with the updated filter
                                 # This ensures the frontend gets the filter before the run finishes
                                 merged = {**last_inner_state, **extracted_state, **frontend_state}
-                                logger.info("[DeduplicatingOrchestrator] Emitting StateSnapshotEvent after filter_dashboard: activeFilter=%s", merged.get('activeFilter'))
+                                logger.debug("[DeduplicatingOrchestrator] Emitting StateSnapshotEvent after filter_dashboard: activeFilter=%s", merged.get('activeFilter'))
                                 yield StateSnapshotEvent(snapshot=merged)
                                 continue  # Skip the default yield since we already yielded the event
                                 
@@ -421,7 +421,7 @@ class DeduplicatingOrchestrator(Orchestrator):
                     tool_name = tool_call_names.get(tool_call_id, "unknown")
                     result = event.content
                     
-                    logger.info("[DeduplicatingOrchestrator] ToolCallResultEvent: tool=%s, content_type=%s, content_preview=%s",
+                    logger.debug("[DeduplicatingOrchestrator] ToolCallResultEvent: tool=%s, content_type=%s, content_preview=%s",
                                tool_name, type(result).__name__, str(result)[:200])
                     
                     # Try to parse JSON if it's a string
@@ -435,15 +435,15 @@ class DeduplicatingOrchestrator(Orchestrator):
                     if isinstance(result, dict):
                         if "flights" in result:
                             extracted_state["flights"] = result["flights"]
-                            logger.info("[DeduplicatingOrchestrator] Extracted %d flights from %s",
+                            logger.debug("[DeduplicatingOrchestrator] Extracted %d flights from %s",
                                        len(result["flights"]), tool_name)
                         if "historical_data" in result:
                             extracted_state["historicalData"] = result["historical_data"]
-                            logger.info("[DeduplicatingOrchestrator] Extracted %d historical points from %s",
+                            logger.debug("[DeduplicatingOrchestrator] Extracted %d historical points from %s",
                                        len(result["historical_data"]), tool_name)
                         if "selectedFlight" in result:
                             extracted_state["selectedFlight"] = result["selectedFlight"]
-                            logger.info("[DeduplicatingOrchestrator] Extracted selectedFlight from %s", tool_name)
+                            logger.debug("[DeduplicatingOrchestrator] Extracted selectedFlight from %s", tool_name)
                 
                 # --- Text message lifecycle tracking (with buffering) ---
                 elif isinstance(event, TextMessageStartEvent):

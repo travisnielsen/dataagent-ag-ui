@@ -45,8 +45,12 @@ logging.getLogger("fastapi_azure_auth").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
-# Check if Azure AD authentication is configured
-AUTH_ENABLED = bool(azure_ad_settings.AZURE_AD_CLIENT_ID and azure_ad_settings.AZURE_AD_TENANT_ID)
+# Check if Azure AD authentication is configured and not explicitly disabled
+AUTH_ENABLED = bool(
+    azure_ad_settings.AZURE_AD_CLIENT_ID 
+    and azure_ad_settings.AZURE_AD_TENANT_ID
+    and not azure_ad_settings.AUTH_DISABLED
+)
 
 # Configure observability before creating the app
 configure_observability()
@@ -91,7 +95,13 @@ async def lifespan(_app: FastAPI):
         logger.info("OpenTelemetry observability is disabled (set ENABLE_INSTRUMENTATION=true to enable)")
     
     # Log authentication status
-    if AUTH_ENABLED:
+    if azure_ad_settings.AUTH_DISABLED:
+        logger.warning("=" * 60)
+        logger.warning("WARNING: Authentication is DISABLED via AUTH_DISABLED!")
+        logger.warning("The API will respond to ANONYMOUS connections.")
+        logger.warning("Do NOT use this setting in production.")
+        logger.warning("=" * 60)
+    elif AUTH_ENABLED:
         logger.info("Azure AD authentication is ENABLED")
         if azure_scheme:
             await azure_scheme.openid_config.load_config()

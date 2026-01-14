@@ -44,6 +44,7 @@ jobs:
               --file ./frontend/Dockerfile \
               --build-arg NEXT_PUBLIC_AZURE_AD_CLIENT_ID=${{ vars.NEXT_PUBLIC_AZURE_AD_CLIENT_ID }} \
               --build-arg NEXT_PUBLIC_AZURE_AD_TENANT_ID=${{ vars.NEXT_PUBLIC_AZURE_AD_TENANT_ID }} \
+              --build-arg NEXT_PUBLIC_AUTH_DISABLED=${{ vars.NEXT_PUBLIC_AUTH_DISABLED || 'false' }} \
               ./frontend
 
       - name: Deploy to Azure Container Apps

@@ -51,7 +51,8 @@ jobs:
             az containerapp update \
               --name ${{ env.CONTAINER_APP_NAME }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
-              --image ${{ env.REGISTRY }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+              --image ${{ env.REGISTRY }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+              --set-env-vars AUTH_DISABLED=${{ vars.AUTH_DISABLED || 'false' }}
 
       - name: Verify deployment
         uses: azure/cli@v2

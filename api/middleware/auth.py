@@ -29,6 +29,9 @@ class AzureADSettings(BaseSettings):
     # Optional: The Application ID URI (if you've set one up for scopes)
     # Usually looks like: api://<client-id>
     AZURE_AD_APP_ID_URI: str = ""
+    
+    # Set to "true" to disable authentication entirely (useful for development)
+    AUTH_DISABLED: bool = False
 
     class Config:
         env_file = ".env"
@@ -93,6 +96,11 @@ class AzureADAuthMiddleware(BaseHTTPMiddleware):
         
         # Skip auth for OPTIONS requests (CORS preflight)
         if request.method == "OPTIONS":
+            return await call_next(request)
+        
+        # Skip if auth is explicitly disabled
+        if self.settings.AUTH_DISABLED:
+            logger.warning("Authentication is DISABLED via AUTH_DISABLED environment variable")
             return await call_next(request)
         
         # Skip if auth is not configured
