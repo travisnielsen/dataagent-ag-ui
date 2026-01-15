@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import os
+import json
 import logging
 from contextlib import asynccontextmanager
+from typing import Optional
+from pathlib import Path
 
 import uvicorn
 from azure.identity.aio import DefaultAzureCredential as AsyncDefaultAzureCredential
@@ -10,7 +13,8 @@ from agent_framework._clients import ChatClientProtocol
 from agent_framework import azure as _azure
 from agent_framework_ag_ui import add_agent_framework_fastapi_endpoint
 from dotenv import load_dotenv
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Query
+from pydantic import BaseModel
 
 from fastapi.middleware.cors import CORSMiddleware
 from agents import create_logistics_agent  # type: ignore
@@ -37,11 +41,12 @@ logging.basicConfig(
 logging.getLogger("azure").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
-# Reduce agent_framework verbosity (it logs all message content at INFO level)
-logging.getLogger("agent_framework").setLevel(logging.WARNING)
-logging.getLogger("agent_framework_ag_ui").setLevel(logging.WARNING)
 # Reduce fastapi_azure_auth verbosity
 logging.getLogger("fastapi_azure_auth").setLevel(logging.WARNING)
+# Control agent_framework verbosity via AGENT_FRAMEWORK_LOG_LEVEL env var (default: WARNING)
+agent_framework_log_level = os.getenv("AGENT_FRAMEWORK_LOG_LEVEL", "WARNING").upper()
+logging.getLogger("agent_framework").setLevel(getattr(logging, agent_framework_log_level, logging.WARNING))
+logging.getLogger("agent_framework_ag_ui").setLevel(getattr(logging, agent_framework_log_level, logging.WARNING))
 
 logger = logging.getLogger(__name__)
 
@@ -162,6 +167,234 @@ async def get_current_user(request: Request):
         "claims": user,
         "name": user.get("name"),
         "email": user.get("preferred_username"),
+    }
+
+
+# ============================================================================
+# REST Data Endpoints for Bulk Data Loading
+# These endpoints provide fast data access without SSE overhead
+# ============================================================================
+
+# Load flight data from JSON file
+_DATA_FILE = Path(__file__).parent / "data" / "flights.json"
+_FLIGHT_DATA_CACHE: dict = {}
+
+def _load_flight_data() -> dict:
+    """Load and cache flight data from the JSON file."""
+    if not _FLIGHT_DATA_CACHE:
+        with open(_DATA_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            _FLIGHT_DATA_CACHE.update(data)
+    return _FLIGHT_DATA_CACHE
+
+
+class FlightsResponse(BaseModel):
+    """Response model for flights endpoint."""
+    flights: list[dict]
+    total: int
+    query: dict
+
+
+class HistoricalResponse(BaseModel):
+    """Response model for historical data endpoint."""
+    historicalData: list[dict]
+    routes: list[str]
+    total: int
+    query: dict
+
+
+@app.get("/logistics/data/flights", response_model=FlightsResponse)
+async def get_flights(
+    limit: int = Query(50, ge=1, le=200, description="Maximum number of flights to return"),
+    offset: int = Query(0, ge=0, description="Number of flights to skip"),
+    risk_level: Optional[str] = Query(None, description="Filter by risk level: low, medium, high, critical"),
+    utilization: Optional[str] = Query(None, description="Filter by utilization: over (>95%), near_capacity (85-95%), optimal (50-85%), under (<50%)"),
+    route_from: Optional[str] = Query(None, description="Filter by origin airport code"),
+    route_to: Optional[str] = Query(None, description="Filter by destination airport code"),
+    date_from: Optional[str] = Query(None, description="Filter by start date (YYYY-MM-DD)"),
+    date_to: Optional[str] = Query(None, description="Filter by end date (YYYY-MM-DD)"),
+    sort_by: Optional[str] = Query("utilizationPercent", description="Sort field"),
+    sort_desc: bool = Query(True, description="Sort descending"),
+):
+    """
+    REST endpoint for bulk flight data retrieval.
+    
+    This endpoint provides fast data access for initial page load and 
+    agent-triggered queries without SSE overhead.
+    """
+    data = _load_flight_data()
+    all_flights = data.get("flights", [])
+    
+    # Apply filters
+    filtered = all_flights
+    
+    if risk_level:
+        filtered = [f for f in filtered if f.get("riskLevel") == risk_level]
+    
+    if utilization:
+        if utilization == "over":
+            filtered = [f for f in filtered if f.get("utilizationPercent", 0) > 95]
+        elif utilization == "near_capacity":
+            filtered = [f for f in filtered if 85 <= f.get("utilizationPercent", 0) <= 95]
+        elif utilization == "under":
+            filtered = [f for f in filtered if f.get("utilizationPercent", 0) < 50]
+        elif utilization == "optimal":
+            filtered = [f for f in filtered if 50 <= f.get("utilizationPercent", 0) < 85]
+    
+    if route_from:
+        filtered = [f for f in filtered if f.get("from", "").upper() == route_from.upper()]
+    
+    if route_to:
+        filtered = [f for f in filtered if f.get("to", "").upper() == route_to.upper()]
+    
+    if date_from:
+        filtered = [f for f in filtered if f.get("flightDate", "") >= date_from]
+    
+    if date_to:
+        filtered = [f for f in filtered if f.get("flightDate", "") <= date_to]
+    
+    # Sort
+    if sort_by and filtered:
+        filtered = sorted(
+            filtered,
+            key=lambda x: x.get(sort_by, 0) if isinstance(x.get(sort_by), (int, float)) else str(x.get(sort_by, "")),
+            reverse=sort_desc
+        )
+    
+    total = len(filtered)
+    
+    # Apply pagination
+    paginated = filtered[offset:offset + limit]
+    
+    return FlightsResponse(
+        flights=paginated,
+        total=total,
+        query={
+            "limit": limit,
+            "offset": offset,
+            "risk_level": risk_level,
+            "utilization": utilization,
+            "route_from": route_from,
+            "route_to": route_to,
+            "date_from": date_from,
+            "date_to": date_to,
+        }
+    )
+
+
+@app.get("/logistics/data/flights/{flight_id}")
+async def get_flight_by_id(flight_id: str):
+    """Get a specific flight by ID or flight number."""
+    data = _load_flight_data()
+    all_flights = data.get("flights", [])
+    
+    # Search by ID or flight number
+    search = flight_id.upper().replace(" ", "")
+    for flight in all_flights:
+        if flight.get("id") == flight_id or flight.get("flightNumber", "").upper() == search:
+            return {"flight": flight}
+    
+    return {"flight": None, "error": f"Flight {flight_id} not found"}
+
+
+@app.get("/logistics/data/historical", response_model=HistoricalResponse)
+async def get_historical_data(
+    route_from: Optional[str] = Query(None, description="Filter by origin airport code"),
+    route_to: Optional[str] = Query(None, description="Filter by destination airport code"),
+    days: int = Query(10, ge=1, le=30, description="Number of days of data"),
+    include_predictions: bool = Query(True, description="Include predicted data"),
+):
+    """
+    REST endpoint for historical payload data retrieval.
+    """
+    data = _load_flight_data()
+    historical = data.get("historicalData", [])
+    
+    # Apply route filter only if both from/to are specified
+    if route_from and route_to:
+        route_pattern = f"{route_from.upper()} → {route_to.upper()}"
+        historical = [h for h in historical if h.get("route") == route_pattern]
+    # If no route filter, return all historical data (for overview chart)
+    
+    # Filter predictions if needed
+    if not include_predictions:
+        historical = [h for h in historical if not h.get("predicted")]
+    
+    # Sort by date
+    historical = sorted(historical, key=lambda x: x.get("date", ""))
+    
+    # Get unique routes
+    unique_routes = sorted(set(h.get("route", "") for h in historical if h.get("route")))
+    
+    # Limit to requested days per route (if we have multiple routes)
+    if not route_from or not route_to:
+        # When showing all routes, limit to the most recent entries per unique route
+        routes_seen: dict[str, int] = {}
+        limited = []
+        for h in historical:
+            route = h.get("route", "aggregate")
+            if routes_seen.get(route, 0) < days:
+                limited.append(h)
+                routes_seen[route] = routes_seen.get(route, 0) + 1
+        historical = limited
+    else:
+        historical = historical[:days]
+    
+    return HistoricalResponse(
+        historicalData=historical,
+        routes=unique_routes,
+        total=len(historical),
+        query={
+            "route_from": route_from,
+            "route_to": route_to,
+            "days": days,
+            "include_predictions": include_predictions,
+        }
+    )
+
+
+@app.get("/logistics/data/summary")
+async def get_data_summary():
+    """
+    Get a summary of all available data for LLM context.
+    Returns counts and statistics without full data.
+    """
+    data = _load_flight_data()
+    flights = data.get("flights", [])
+    
+    # Calculate statistics
+    risk_counts = {"low": 0, "medium": 0, "high": 0, "critical": 0}
+    route_counts: dict[str, int] = {}
+    total_utilization = 0
+    
+    for f in flights:
+        risk = f.get("riskLevel", "unknown")
+        if risk in risk_counts:
+            risk_counts[risk] += 1
+        
+        route = f"{f.get('from', '?')} → {f.get('to', '?')}"
+        route_counts[route] = route_counts.get(route, 0) + 1
+        
+        total_utilization += f.get("utilizationPercent", 0)
+    
+    avg_utilization = total_utilization / len(flights) if flights else 0
+    
+    # Get unique airports
+    airports = set()
+    for f in flights:
+        airports.add(f.get("from", ""))
+        airports.add(f.get("to", ""))
+    airports.discard("")
+    
+    return {
+        "totalFlights": len(flights),
+        "riskBreakdown": risk_counts,
+        "averageUtilization": round(avg_utilization, 1),
+        "uniqueRoutes": len(route_counts),
+        "topRoutes": sorted(route_counts.items(), key=lambda x: x[1], reverse=True)[:10],
+        "airports": sorted(list(airports)),
+        "flightsAtRisk": risk_counts["high"] + risk_counts["critical"],
+        "underUtilizedFlights": risk_counts["low"],
     }
 
 

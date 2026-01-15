@@ -25,19 +25,25 @@ from .responses_api import get_thread_response_store, get_current_agui_thread_id
 logger = logging.getLogger(__name__)
 
 # Tools that are frontend-only (handled by CopilotKit, not backend)
+# These tools trigger REST API calls from the frontend, not SSE streaming
 FRONTEND_ONLY_TOOLS = {
     "filter_dashboard",
     "setThemeColor",
     "display_flight_list",
     "display_flight_detail",
     "display_historical_chart",
+    # REST API data fetching actions (kept for backwards compat if any remain)
+    "fetch_flight_details",
+    "reload_all_flights",
+    # NOTE: fetch_flights is now a BACKEND tool that updates activeFilter state
+    # The frontend reacts to state.activeFilter changes and fetches via REST
 }
 
 # Frontend-only state fields that should be preserved from the incoming request
 # These fields are set by frontend actions (like filter_dashboard) and should NOT
 # be overwritten by the agent's state
+# Note: activeFilter is NOT here - it's now set by backend fetch_flights tool
 FRONTEND_ONLY_STATE_FIELDS = {
-    "activeFilter",
     "selectedRoute",
 }
 
@@ -65,24 +71,146 @@ class DeduplicatingOrchestrator(Orchestrator):
         """Delegate to inner orchestrator."""
         return self._inner.can_handle(context)
     
+    def _filter_frontend_tool_calls(self, context: ExecutionContext) -> None:
+        """Filter messages to remove frontend-only tool calls and their results.
+        
+        Frontend-only tools (like filter_dashboard) are handled by CopilotKit locally
+        and should NEVER be sent to Azure. This method removes:
+        - Frontend tool calls from assistant messages (reconstructs message without them)
+        - Tool result messages for frontend-only tools
+        
+        IMPORTANT: When an assistant message contains MIXED tool calls (both frontend
+        and backend), we RECONSTRUCT the message to keep only the backend tool calls.
+        This preserves conversation context for the LLM while avoiding Azure rejection.
+        
+        This is called UNCONDITIONALLY on every request because CopilotKit always
+        sends the full conversation history, and Azure will reject messages containing
+        tool calls it didn't initiate.
+        """
+        messages = context.messages
+        if not messages:
+            return
+        
+        original_count = len(messages)
+        filtered = []
+        
+        # First pass: identify call_ids for frontend-only tools
+        frontend_tool_call_ids: set[str] = set()
+        
+        for msg in messages:
+            role = getattr(msg, 'role', None)
+            role_value = role.value if hasattr(role, 'value') else str(role) if role else 'unknown'
+            
+            if role_value.lower() == 'assistant':
+                msg_contents = getattr(msg, 'contents', None) or getattr(msg, 'content', None)
+                if msg_contents:
+                    contents = msg_contents if isinstance(msg_contents, list) else [msg_contents]
+                    for c in contents:
+                        if isinstance(c, FunctionCallContent):
+                            tool_name = getattr(c, 'name', None)
+                            call_id = getattr(c, 'call_id', None)
+                            if tool_name in FRONTEND_ONLY_TOOLS and call_id:
+                                frontend_tool_call_ids.add(call_id)
+                                logger.debug("[DeduplicatingOrchestrator] Found frontend tool call: %s (id=%s)", tool_name, call_id[:12] if call_id else 'none')
+        
+        if not frontend_tool_call_ids:
+            # No frontend tool calls found, nothing to filter
+            return
+        
+        logger.debug("[DeduplicatingOrchestrator] Filtering %d frontend tool call IDs from %d messages", 
+                    len(frontend_tool_call_ids), original_count)
+        
+        # Second pass: filter/reconstruct messages
+        for i, msg in enumerate(messages):
+            role = getattr(msg, 'role', None)
+            role_value = role.value if hasattr(role, 'value') else str(role) if role else 'unknown'
+            msg_contents = getattr(msg, 'contents', None) or getattr(msg, 'content', None)
+            
+            # Always keep user messages
+            if role_value.lower() == 'user':
+                filtered.append(msg)
+                continue
+            
+            # Check tool result messages - filter if it's for a frontend tool
+            if role_value.lower() == 'tool':
+                if msg_contents:
+                    contents = msg_contents if isinstance(msg_contents, list) else [msg_contents]
+                    is_frontend_result = False
+                    for c in contents:
+                        call_id = getattr(c, 'call_id', None)
+                        if call_id and call_id in frontend_tool_call_ids:
+                            is_frontend_result = True
+                            break
+                    if is_frontend_result:
+                        logger.debug("[DeduplicatingOrchestrator] Filtering tool result for frontend tool (msg %d)", i)
+                        continue
+                filtered.append(msg)
+                continue
+            
+            # Check assistant messages - reconstruct without frontend tool calls
+            if role_value.lower() == 'assistant':
+                if msg_contents:
+                    contents = msg_contents if isinstance(msg_contents, list) else [msg_contents]
+                    
+                    # Check if this message has any frontend tool calls
+                    has_frontend = False
+                    has_backend = False
+                    for c in contents:
+                        if isinstance(c, FunctionCallContent):
+                            call_id = getattr(c, 'call_id', None)
+                            if call_id and call_id in frontend_tool_call_ids:
+                                has_frontend = True
+                            else:
+                                has_backend = True
+                    
+                    if has_frontend:
+                        if not has_backend:
+                            # Only frontend tools - filter entire message
+                            logger.debug("[DeduplicatingOrchestrator] Filtering assistant msg with only frontend tools (msg %d)", i)
+                            continue
+                        else:
+                            # Mixed tools - reconstruct without frontend tool calls
+                            new_contents = [c for c in contents 
+                                          if not (isinstance(c, FunctionCallContent) 
+                                                 and getattr(c, 'call_id', None) in frontend_tool_call_ids)]
+                            
+                            if new_contents:
+                                # Update the message contents in place
+                                if hasattr(msg, 'contents'):
+                                    msg.contents = new_contents
+                                elif hasattr(msg, 'content'):
+                                    msg.content = new_contents
+                                logger.debug("[DeduplicatingOrchestrator] Reconstructed assistant msg %d: removed %d frontend tools, kept %d items", 
+                                           i, len(contents) - len(new_contents), len(new_contents))
+                            else:
+                                # All contents were frontend tools
+                                logger.debug("[DeduplicatingOrchestrator] Filtering assistant msg - all contents were frontend tools (msg %d)", i)
+                                continue
+                
+                filtered.append(msg)
+                continue
+            
+            # Keep other message types (system, etc.)
+            filtered.append(msg)
+        
+        if len(filtered) != original_count:
+            context._messages = filtered
+            logger.info("[DeduplicatingOrchestrator] Filtered frontend tool calls: %d -> %d messages", 
+                       original_count, len(filtered))
+    
     def _filter_messages_for_fresh_start(
         self, 
         context: ExecutionContext, 
         agui_thread_id: str | None,
         thread_response_store: dict[str, str]
     ) -> None:
-        """Filter messages to remove tool calls from previous frontend tool invocations.
+        """Filter messages to remove ALL tool calls from previous invocations for fresh starts.
         
-        When a frontend-only tool (like filter_dashboard) is called, CopilotKit handles
-        it locally and doesn't send a result back to Azure. On the next request,
-        CopilotKit sends the full message history including that tool call.
+        This is more aggressive than _filter_frontend_tool_calls - it removes ALL tool
+        calls when starting a fresh conversation (no stored response_id).
         
         The SDK fails with KeyError because it doesn't have call_id_to_id mappings
         for tool calls it didn't initiate in this session.
-        
-        This method filters out:
-        - Messages with role=TOOL (tool results)
-        - Assistant messages containing FunctionCallContent or FunctionResultContent
         """
         # Only filter for fresh starts (no stored response_id)
         if agui_thread_id and agui_thread_id in thread_response_store:
@@ -228,18 +356,44 @@ class DeduplicatingOrchestrator(Orchestrator):
         token = current_agui_thread_id.set(agui_thread_id)
         
         try:
+            # IMPORTANT: Check if this is just a frontend tool result (e.g., filter_dashboard).
+            # If so, we should NOT invoke the LLM again - CopilotKit already handled the action
+            # and the conversation turn is complete. Just emit completion events and return.
+            if self._is_frontend_tool_result_only(context):
+                logger.info("[DeduplicatingOrchestrator] Frontend tool result detected - completing run without LLM invocation")
+                
+                # CRITICAL: Clear the stored response_id for this thread.
+                # Azure's Responses API is waiting for this tool result, but we're not sending it.
+                # If we don't clear the response_id, the next request will try to continue
+                # from Azure's "stuck" state and fail with "No tool output found".
+                if agui_thread_id and agui_thread_id in thread_response_store:
+                    logger.info("[DeduplicatingOrchestrator] Clearing response_id for thread %s to reset Azure state", agui_thread_id)
+                    del thread_response_store[agui_thread_id]
+                
+                # Emit minimal events to complete the AG-UI protocol properly
+                yield RunStartedEvent(thread_id=agui_thread_id, run_id="frontend-action-complete")
+                # Preserve the current state from the incoming request
+                incoming_state = context.input_data.get("state", {})
+                if incoming_state:
+                    yield StateSnapshotEvent(snapshot=incoming_state)
+                yield RunFinishedEvent(thread_id=agui_thread_id, run_id="frontend-action-complete")
+                return
+            
             # Log thread state at debug level
             logger.debug("[DeduplicatingOrchestrator] Thread ID: %s, in store: %s", agui_thread_id, agui_thread_id in thread_response_store)
+            
+            # ALWAYS filter out frontend-only tool calls from the message history.
+            # These tools (like filter_dashboard) are handled by CopilotKit locally
+            # and Azure will reject messages containing tool calls it didn't initiate.
+            self._filter_frontend_tool_calls(context)
             
             # Check if we're continuing a conversation (have stored response_id)
             is_continuation = agui_thread_id and agui_thread_id in thread_response_store
             
-            # For continuations with tool results, we let it through - Azure needs the tool result
-            # For fresh starts, filter out old tool calls/results
+            # For fresh starts, filter out ALL old tool calls/results (not just frontend ones)
+            # This prevents KeyError on call_id_to_id when the SDK tries to process messages
+            # that contain tool calls it doesn't have mappings for
             if not is_continuation:
-                # Filter messages to remove tool calls/results from previous frontend tool invocations
-                # This prevents KeyError on call_id_to_id when the SDK tries to process messages
-                # that contain tool calls it doesn't have mappings for
                 self._filter_messages_for_fresh_start(context, agui_thread_id, thread_response_store)
             
             if is_continuation:
@@ -253,6 +407,11 @@ class DeduplicatingOrchestrator(Orchestrator):
             # Track tool call names for each ID (so we know which tools completed)
             tool_call_names: dict[str, str] = {}
             
+            # Track if a "command" tool was called (fetch_flights, clear_filter)
+            # These tools update the dashboard - suppress text responses after them
+            command_tool_called: bool = False
+            COMMAND_TOOLS = {"fetch_flights", "clear_filter"}
+            
             # Extracted state from tool results - will be emitted as StateSnapshotEvent
             extracted_state: dict = {}
             
@@ -265,11 +424,30 @@ class DeduplicatingOrchestrator(Orchestrator):
             # that should not be overwritten by the agent's state
             frontend_state: dict = {}
             incoming_state = context.input_data.get("state", {})
+            logger.info("[DeduplicatingOrchestrator] Incoming state keys: %s", list(incoming_state.keys()) if incoming_state else "None")
             if incoming_state:
+                active_filter_in_state = incoming_state.get("activeFilter")
+                logger.info("[DeduplicatingOrchestrator] activeFilter in incoming state: %s", active_filter_in_state)
+                
                 for field in FRONTEND_ONLY_STATE_FIELDS:
                     if field in incoming_state and incoming_state[field] is not None:
                         frontend_state[field] = incoming_state[field]
                         logger.debug("[DeduplicatingOrchestrator] Preserving frontend field '%s': %s", field, incoming_state[field])
+                
+                # Set the current active filter ContextVar for tools to access
+                # This allows analyze_flights to automatically use the current filter
+                active_filter = incoming_state.get("activeFilter")
+                if active_filter:
+                    # Clean up __KEEP__ sentinel values - they should be treated as None
+                    cleaned_filter = {
+                        k: (None if v == "__KEEP__" else v)
+                        for k, v in active_filter.items()
+                    }
+                    from agents.logistics_agent import current_active_filter
+                    current_active_filter.set(cleaned_filter)
+                    logger.info("[DeduplicatingOrchestrator] Set current_active_filter ContextVar: %s", cleaned_filter)
+                else:
+                    logger.warning("[DeduplicatingOrchestrator] No activeFilter in incoming state - analyze_flights won't have context")
             
             # Track text message lifecycle to ensure proper START/END pairing
             # Buffer START events until we see content - this filters out "tool-only response" placeholders
@@ -281,12 +459,14 @@ class DeduplicatingOrchestrator(Orchestrator):
                 event_type = type(event).__name__
                 logger.debug("[DeduplicatingOrchestrator] Event: %s", event_type)
                 
-                # --- StateSnapshotEvent - preserve and merge, then pass through ---
+                # --- StateSnapshotEvent - BUFFER instead of emitting immediately ---
+                # This prevents flashing when inner orchestrator emits state BEFORE
+                # we've extracted activeFilter from tool results
                 if isinstance(event, StateSnapshotEvent):
                     snapshot = event.snapshot or {}
                     flights_count = len(snapshot.get('flights', []))
                     historical_count = len(snapshot.get('historicalData', []))
-                    logger.debug("[DeduplicatingOrchestrator] StateSnapshotEvent from inner: keys=%s, flights=%d, historical=%d",
+                    logger.debug("[DeduplicatingOrchestrator] StateSnapshotEvent from inner (buffering): keys=%s, flights=%d, historical=%d",
                                list(snapshot.keys()), flights_count, historical_count)
                     
                     # ALWAYS preserve the inner state - it may have fields we don't extract
@@ -298,16 +478,8 @@ class DeduplicatingOrchestrator(Orchestrator):
                             # Set to empty if we haven't seen this key before
                             last_inner_state[key] = value
                     
-                    # Merge order (later takes priority):
-                    # 1. inner state (from agent)
-                    # 2. extracted state (from tool results)
-                    # 3. frontend state (from incoming request - highest priority for frontend-only fields)
-                    merged = {**last_inner_state, **extracted_state, **frontend_state}
-                    logger.debug("[DeduplicatingOrchestrator] Merged state emitting: flights=%d, historical=%d, activeFilter=%s",
-                               len(merged.get('flights', [])),
-                               len(merged.get('historicalData', [])),
-                               merged.get('activeFilter'))
-                    yield StateSnapshotEvent(snapshot=merged)
+                    # DON'T emit here - buffer and emit once at RunFinished
+                    # This ensures we have all extracted state (activeFilter) before emitting
                     continue
                 
                 # --- Tool call deduplication ---
@@ -325,6 +497,11 @@ class DeduplicatingOrchestrator(Orchestrator):
                     # Track this tool call
                     seen_tool_call_ids.add(tool_call_id)
                     tool_call_names[tool_call_id] = tool_name
+                    
+                    # Mark command tools immediately - suppress text from this point
+                    if tool_name in COMMAND_TOOLS:
+                        command_tool_called = True
+                        logger.info("[DeduplicatingOrchestrator] Command tool started: %s (suppressing text)", tool_name)
                     
                     # Log ALL tool calls at INFO level to see what's happening
                     if tool_name in FRONTEND_ONLY_TOOLS:
@@ -444,9 +621,41 @@ class DeduplicatingOrchestrator(Orchestrator):
                         if "selectedFlight" in result:
                             extracted_state["selectedFlight"] = result["selectedFlight"]
                             logger.debug("[DeduplicatingOrchestrator] Extracted selectedFlight from %s", tool_name)
+                        # Extract activeFilter from fetch_flights/clear_filter tool results
+                        if "activeFilter" in result:
+                            # Clean up __KEEP__ sentinel values - they should be treated as None
+                            raw_filter = result["activeFilter"]
+                            cleaned_filter = {
+                                k: (None if v == "__KEEP__" else v)
+                                for k, v in raw_filter.items()
+                            }
+                            extracted_state["activeFilter"] = cleaned_filter
+                            command_tool_called = True  # Suppress text responses
+                            logger.info("[DeduplicatingOrchestrator] Extracted activeFilter from %s: %s (command_tool_called=True)", 
+                                       tool_name, cleaned_filter)
+                            
+                            # Also update the ContextVar so subsequent tools (like analyze_flights)
+                            # can access the updated filter within the same request
+                            from agents.logistics_agent import current_active_filter
+                            current_active_filter.set(cleaned_filter)
+                            logger.debug("[DeduplicatingOrchestrator] Updated current_active_filter ContextVar: %s", cleaned_filter)
+                            
+                            # 🚀 EMIT StateSnapshotEvent IMMEDIATELY for activeFilter
+                            # Yield the ToolCallResultEvent FIRST so the tool is marked complete,
+                            # THEN emit the state snapshot so frontend can start REST fetch
+                            yield event  # ToolCallResultEvent - marks tool complete
+                            
+                            merged = {**last_inner_state, **extracted_state, **frontend_state}
+                            logger.info("[DeduplicatingOrchestrator] Emitting EARLY StateSnapshotEvent for activeFilter: %s", cleaned_filter)
+                            yield StateSnapshotEvent(snapshot=merged)
+                            continue  # Skip the default yield since we already yielded the event
                 
                 # --- Text message lifecycle tracking (with buffering) ---
                 elif isinstance(event, TextMessageStartEvent):
+                    # Suppress text messages after command tools (fetch_flights, clear_filter)
+                    if command_tool_called:
+                        logger.info("[DeduplicatingOrchestrator] SUPPRESSING TextMessageStart after command tool: %s", event.message_id)
+                        continue
                     message_id = event.message_id
                     if message_id in pending_start_events or message_id in active_text_message_ids:
                         logger.debug("[DeduplicatingOrchestrator] Filtering duplicate TextMessageStartEvent: %s", message_id)
@@ -457,6 +666,10 @@ class DeduplicatingOrchestrator(Orchestrator):
                     continue  # Don't yield yet
                 
                 elif isinstance(event, TextMessageContentEvent):
+                    # Suppress text messages after command tools
+                    if command_tool_called:
+                        logger.info("[DeduplicatingOrchestrator] SUPPRESSING TextMessageContent after command tool: %s", event.delta[:50] if event.delta else "(empty)")
+                        continue
                     message_id = event.message_id
                     # If we have a pending start for this message, emit it now
                     if message_id in pending_start_events:
@@ -497,13 +710,14 @@ class DeduplicatingOrchestrator(Orchestrator):
                         logger.debug("[DeduplicatingOrchestrator] Dropping %d phantom text messages", len(pending_start_events))
                         pending_start_events.clear()
                     
-                    # DON'T emit a separate final StateSnapshotEvent here!
-                    # The inner orchestrator already emits StateSnapshotEvents with the full state,
-                    # and we're preserving/merging those above. Emitting a partial extracted_state
-                    # here was causing the state to be reset (missing historicalData, etc.)
-                    logger.debug("[DeduplicatingOrchestrator] RunFinished - final state: flights=%d, historical=%d",
-                                len(last_inner_state.get('flights', [])),
-                                len(last_inner_state.get('historicalData', [])))
+                    # Emit final StateSnapshotEvent with all buffered state merged
+                    # Merge order: inner state < extracted state < frontend state
+                    merged = {**last_inner_state, **extracted_state, **frontend_state}
+                    logger.info("[DeduplicatingOrchestrator] RunFinished - emitting final state: flights=%d, historical=%d, activeFilter=%s",
+                               len(merged.get('flights', [])),
+                               len(merged.get('historicalData', [])),
+                               merged.get('activeFilter'))
+                    yield StateSnapshotEvent(snapshot=merged)
                 
                 yield event
         finally:
