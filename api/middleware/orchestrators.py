@@ -448,6 +448,19 @@ class DeduplicatingOrchestrator(Orchestrator):
                     logger.info("[DeduplicatingOrchestrator] Set current_active_filter ContextVar: %s", cleaned_filter)
                 else:
                     logger.warning("[DeduplicatingOrchestrator] No activeFilter in incoming state - analyze_flights won't have context")
+                
+                # Set the current selected flight ContextVar for tools to access
+                # This allows analyze_flights to automatically analyze the selected flight
+                selected_flight = incoming_state.get("selectedFlight")
+                if selected_flight:
+                    from agents.logistics_agent import current_selected_flight
+                    current_selected_flight.set(selected_flight)
+                    logger.info("[DeduplicatingOrchestrator] Set current_selected_flight ContextVar: %s", selected_flight.get('flightNumber'))
+                else:
+                    # Clear selected flight if not present
+                    from agents.logistics_agent import current_selected_flight
+                    current_selected_flight.set(None)
+                    logger.debug("[DeduplicatingOrchestrator] No selectedFlight in incoming state")
             
             # Track text message lifecycle to ensure proper START/END pairing
             # Buffer START events until we see content - this filters out "tool-only response" placeholders

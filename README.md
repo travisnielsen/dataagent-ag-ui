@@ -123,3 +123,102 @@ The following scripts can also be run using your preferred package manager:
 - `start` – Starts the production server
 - `lint` – Runs ESLint for code linting
 - `install:agent` – Installs Python dependencies for the agent
+
+## AG-UI and CopilotKit Features
+
+This application demonstrates several key features from the [AG-UI protocol](https://docs.ag-ui.com/) and [CopilotKit](https://docs.copilotkit.ai/):
+
+| Feature | Used? | Details |
+|---------|-------|---------|
+| **Agentic Chat** | ✅ Yes | `useCopilotAction` with handlers like `reload_all_flights`, `fetch_flight_details` that the LLM calls to execute frontend logic |
+| **Backend Tool Rendering** | ✅ Yes | `useRenderToolCall` renders progress UI in the chat for backend tools (`fetch_flights`, `analyze_flights`, `clear_filter`, etc.) |
+| **Human in the Loop** | ⚠️ Partial | `HumanInTheLoopOrchestrator` is in the orchestrator chain but no tools currently require approval |
+| **Agentic Generative UI** | ❌ No | No long-running background tasks with streaming UI updates |
+| **Tool-based Generative UI** | ⚠️ Partial | `useCopilotAction` with `render` exists for `display_flights`, `display_flight_details`, `display_historical_data` but actions are disabled with minimal output |
+| **Shared State** | ✅ Yes | `useCoAgent` syncs `LogisticsAgentState` (including `activeFilter`) bidirectionally between frontend and Python agent |
+| **Predictive State Updates** | ✅ Yes | `PREDICT_STATE_CONFIG` maps tool outputs to state for immediate UI updates before tool completion |
+
+### Feature Examples
+
+#### Agentic Chat (Frontend Actions)
+
+Frontend actions allow the LLM to invoke client-side handlers:
+
+```tsx
+useCopilotAction({
+  name: "reload_all_flights",
+  description: "Clear all filters and load ALL flights into dashboard.",
+  parameters: [{ name: "count", type: "number", required: false }],
+  handler: async ({ count }) => {
+    const flights = await refetchFlights({ limit: count || 100 });
+    setDisplayFlights(flights);
+    return `Dashboard now shows ${flights.length} flights.`;
+  },
+});
+```
+
+#### Backend Tool Rendering
+
+Render custom UI in the chat when backend tools execute:
+
+```tsx
+useRenderToolCall({
+  name: "fetch_flights",
+  render: ({ args, status }) => (
+    <div className="flex items-center gap-2 text-sm">
+      {status !== 'complete' ? (
+        <span>🔄 Fetching flights...</span>
+      ) : (
+        <span>✅ Loaded flights</span>
+      )}
+    </div>
+  ),
+});
+```
+
+#### Shared State
+
+Bidirectional state sync between React and the Python agent:
+
+```tsx
+const { state, setState } = useCoAgent<LogisticsAgentState>({
+  name: "logistics_agent",
+  initialState: initialLogisticsState,
+});
+
+// React to agent state changes
+useEffect(() => {
+  if (state.activeFilter) {
+    refetchFlights(state.activeFilter);
+  }
+}, [state.activeFilter]);
+```
+
+#### Predictive State Updates
+
+Map backend tool outputs to state for instant UI feedback:
+
+```python
+PREDICT_STATE_CONFIG = {
+    "activeFilter": {
+        "tool": "fetch_flights",
+        "tool_argument": "activeFilter",
+    },
+}
+```
+
+#### Backend Tools
+
+Python tools the LLM can invoke via the agent:
+
+```python
+@ai_function(
+    name="fetch_flights",
+    description="Load and filter flights in the dashboard.",
+)
+def fetch_flights(
+    route_from: Annotated[str | None, Field(description="Origin airport code")] = None,
+    route_to: Annotated[str | None, Field(description="Destination airport code")] = None,
+) -> dict:
+    return {"message": "Loading flights...", "activeFilter": {...}}
+```

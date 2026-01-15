@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { AuthButton } from "@/components/AuthButton";
 import { LogisticsAgentState, Flight, DashboardFilter, initialLogisticsState, DataSummary } from "@/lib/logistics-types";
 import { useLogisticsData } from "@/lib/useLogisticsData";
-import { useCoAgent, useCopilotAction, useCopilotReadable, useCoAgentStateRender, useRenderToolCall } from "@copilotkit/react-core";
+import { useCoAgent, useCopilotAction, useCoAgentStateRender, useRenderToolCall } from "@copilotkit/react-core";
 import { useAgent } from "@copilotkit/react-core/v2";
 import { CopilotKitCSSProperties, CopilotChat } from "@copilotkit/react-ui";
 import { FlightListCard } from "@/components/logistics/FlightListCard";
@@ -228,57 +228,6 @@ function LogisticsDashboard({ themeColor }: { themeColor: string }) {
       }
       return null;
     },
-  });
-
-  // 🪁 LLM Context: Make data available to the LLM via useCopilotReadable
-  useCopilotReadable({
-    description: "Current dashboard state",
-    value: {
-      flightsDisplayed: displayFlights?.length ?? 0,
-    },
-  });
-
-  useCopilotReadable({
-    description: "Current logistics dashboard data summary.",
-    value: summary ? {
-      totalFlightsInDatabase: summary.totalFlights,
-      flightsCurrentlyLoaded: displayFlights?.length ?? 0,
-      riskBreakdown: summary.riskBreakdown,
-      averageUtilization: `${summary.averageUtilization.toFixed(1)}%`,
-      availableAirports: summary.airports,
-      availableRoutes: summary.routes,
-    } : {
-      status: isLoading ? "Loading data from API..." : "No data available yet",
-      flightsCurrentlyLoaded: displayFlights?.length ?? 0,
-    },
-  });
-
-  // 🪁 LLM Context: Expose current UI filter state (not the data itself)
-  // The LLM uses this to know what's being displayed, then uses backend tools to analyze
-  const uiFilterState = React.useMemo(() => {
-    const flightCount = displayFlights?.length ?? 0;
-    
-    // Build filter parameters for analyze_flights
-    const routeFrom = displayFilter?.routeFrom || null;
-    const routeTo = displayFilter?.routeTo || null;
-    const utilizationType = displayFilter?.utilizationType || null;
-    const riskLevel = displayFilter?.riskLevel || null;
-    
-    // Build human-readable description
-    const filterParts: string[] = [];
-    if (routeFrom) filterParts.push(`route_from="${routeFrom}"`);
-    if (routeTo) filterParts.push(`route_to="${routeTo}"`);
-    if (utilizationType && utilizationType !== 'all') filterParts.push(`utilization_filter="${utilizationType}"`);
-    if (riskLevel) filterParts.push(`risk_level="${riskLevel}"`);
-    
-    const filterParams = filterParts.length > 0 ? filterParts.join(', ') : 'none';
-    
-    return `Currently showing ${flightCount} flight(s). When user asks about current/displayed flights, call analyze_flights with: ${filterParams}`;
-  }, [displayFlights, displayFilter]);
-
-  useCopilotReadable({
-    description: "CURRENT DASHBOARD STATE - Use these exact parameters when calling analyze_flights for questions about displayed flights",
-    value: uiFilterState,
   });
 
   // Debug: Log state changes
@@ -693,6 +642,12 @@ function LogisticsDashboard({ themeColor }: { themeColor: string }) {
         setSelectedFlight(flight);
         setSelectedRoute(`${flight.from} → ${flight.to}`);
         
+        // 🔄 Sync selected flight to agent state so LLM knows which flight is being viewed
+        setState(prev => ({
+          ...prev,
+          selectedFlight: flight,
+        }));
+        
         return `Showing details for flight ${flight.flightNumber}. Utilization: ${flight.utilizationPercent}% (${flight.riskLevel} risk).`;
       } catch (err) {
         console.error('[fetch_flight_details] Error:', err);
@@ -713,18 +668,30 @@ function LogisticsDashboard({ themeColor }: { themeColor: string }) {
         </div>
       );
     },
-  }, [setSelectedFlight, setSelectedRoute]);
+  }, [setSelectedFlight, setSelectedRoute, setState]);
 
   // Handle flight selection from the list
   const handleSelectFlight = (flight: Flight) => {
     setSelectedFlight(flight);
     setSelectedRoute(`${flight.from} → ${flight.to}`);
+    
+    // 🔄 Sync selected flight to agent state so LLM knows which flight is being viewed
+    setState(prev => ({
+      ...prev,
+      selectedFlight: flight,
+    }));
   };
 
   // Handle closing the detail view
   const handleCloseDetail = () => {
     setSelectedFlight(null);
     setSelectedRoute(null);
+    
+    // 🔄 Clear selected flight in agent state
+    setState(prev => ({
+      ...prev,
+      selectedFlight: null,
+    }));
   };
 
   // Detect if all displayed flights share the same route
@@ -900,6 +867,25 @@ function LogisticsDashboard({ themeColor }: { themeColor: string }) {
                 // Clear filters and reload all data
                 setDisplayFilter(null);
                 setSelectedRoute(null);
+                
+                // 🔄 IMPORTANT: Sync cleared filter to agent state so LLM knows filters are cleared
+                // This ensures the agent's activeFilter matches the dashboard UI
+                const clearedFilter = {
+                  routeFrom: null,
+                  routeTo: null,
+                  utilizationType: null,
+                  riskLevel: null,
+                  dateFrom: null,
+                  dateTo: null,
+                  limit: 100,
+                };
+                setState(prev => ({
+                  ...prev,
+                  activeFilter: clearedFilter,
+                }));
+                lastResolvedFilterRef.current = clearedFilter;
+                setLastActiveFilter(JSON.stringify(clearedFilter));
+                
                 try {
                   const flights = await refetchFlights({ limit: 100, sortBy: 'utilizationPercent', sortDesc: true });
                   const historical = await refetchHistorical();

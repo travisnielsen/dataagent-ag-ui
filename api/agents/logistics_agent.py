@@ -27,6 +27,10 @@ logger = logging.getLogger(__name__)
 # This allows tools to automatically use the current dashboard filter
 current_active_filter: ContextVar[dict | None] = ContextVar("current_active_filter", default=None)
 
+# ContextVar to pass selected flight from request to tools
+# This allows tools to automatically analyze the selected flight when user asks about "this flight"
+current_selected_flight: ContextVar[dict | None] = ContextVar("current_selected_flight", default=None)
+
 
 # Load flight data from JSON file
 _DATA_FILE = Path(__file__).parent.parent / "data" / "flights.json"
@@ -433,7 +437,7 @@ def get_flight_details(
 
 @ai_function(
     name="analyze_flights",
-    description="Answer questions about flights. For questions about 'current', 'displayed', or 'this/these' flights, set use_current_filter=true to analyze only what's shown in the UI.",
+    description="Answer questions about flights. If user is viewing a specific flight detail card (asks about 'this flight', 'current flight', 'summarize this'), the tool automatically analyzes that selected flight. For questions about filtered/displayed flights, it uses the current dashboard filter.",
 )
 def analyze_flights(
     use_current_filter: Annotated[
@@ -473,14 +477,64 @@ def analyze_flights(
         Field(description="The user's question about the data."),
     ] = "general summary",
 ) -> dict:
-    """Analyze flight data based on current filter and answer questions."""
+    """Analyze flight data based on selected flight, current filter, or explicit parameters."""
     all_flights = _get_all_flights()
     
-    # AUTO-USE CURRENT FILTER: If no explicit filters provided, use the current dashboard filter
+    # PRIORITY 1: Check if user has a specific flight selected (viewing detail card)
+    # If so, analyze just that flight - this handles "tell me about this flight" queries
+    selected_flight = current_selected_flight.get()
+    if selected_flight and not any([displayed_flight_ids, utilization_filter, route_from, route_to, risk_level, date_from, date_to]):
+        flight_number = selected_flight.get('flightNumber', 'unknown')
+        logger.info("[analyze_flights] Analyzing selected flight: %s", flight_number)
+        
+        # Return detailed analysis of the selected flight
+        utilization = selected_flight.get('utilizationPercent', 0)
+        risk = selected_flight.get('riskLevel', 'unknown')
+        current_lbs = selected_flight.get('currentPounds', 0)
+        max_lbs = selected_flight.get('maxPounds', 0)
+        current_cf = selected_flight.get('currentCubicFeet', 0)
+        max_cf = selected_flight.get('maxCubicFeet', 0)
+        route = f"{selected_flight.get('from', '?')} → {selected_flight.get('to', '?')}"
+        flight_date = selected_flight.get('flightDate', 'unknown')
+        sort_time = selected_flight.get('sortTime', 'unknown')
+        
+        # Determine capacity status
+        if utilization > 95:
+            capacity_status = "over capacity - requires immediate attention"
+        elif utilization >= 85:
+            capacity_status = "near capacity - monitor closely"
+        elif utilization >= 50:
+            capacity_status = "optimal utilization"
+        else:
+            capacity_status = "under-utilized - opportunity for consolidation"
+        
+        return {
+            "analysis_type": "selected_flight",
+            "flight_number": flight_number,
+            "route": route,
+            "flight_date": flight_date,
+            "sort_time": sort_time,
+            "utilization_percent": utilization,
+            "capacity_status": capacity_status,
+            "risk_level": risk,
+            "weight": {
+                "current_pounds": current_lbs,
+                "max_pounds": max_lbs,
+                "available_pounds": max_lbs - current_lbs,
+            },
+            "volume": {
+                "current_cubic_feet": current_cf,
+                "max_cubic_feet": max_cf,
+                "available_cubic_feet": max_cf - current_cf,
+            },
+            "question": question,
+        }
+    
+    # PRIORITY 2: Use current dashboard filter if no explicit filters provided
     # This ensures we analyze exactly what the user sees without LLM needing to pass params
     active_filter = current_active_filter.get()
-    logger.info("[analyze_flights] Called with: route_from=%s, route_to=%s, utilization=%s, active_filter=%s",
-                route_from, route_to, utilization_filter, active_filter)
+    logger.info("[analyze_flights] Called with: route_from=%s, route_to=%s, utilization=%s, active_filter=%s, selected_flight=%s",
+                route_from, route_to, utilization_filter, active_filter, selected_flight.get('flightNumber') if selected_flight else None)
     
     # Helper to clean __KEEP__ sentinel values (fallback in case orchestrator didn't clean them)
     def clean_value(v):
