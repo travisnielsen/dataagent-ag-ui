@@ -188,6 +188,19 @@ def _load_flight_data() -> dict:
     return _FLIGHT_DATA_CACHE
 
 
+# ============================================================================
+# Feedback Models
+# ============================================================================
+
+class RecommendationFeedbackPayload(BaseModel):
+    """Feedback payload for risk mitigation recommendations."""
+    flightId: str
+    flightNumber: str
+    votes: dict[str, str]  # recommendation_id -> "up" | "down"
+    comment: Optional[str] = None
+    timestamp: str
+
+
 class FlightsResponse(BaseModel):
     """Response model for flights endpoint."""
     flights: list[dict]
@@ -395,6 +408,39 @@ async def get_data_summary():
         "airports": sorted(list(airports)),
         "flightsAtRisk": risk_counts["high"] + risk_counts["critical"],
         "underUtilizedFlights": risk_counts["low"],
+    }
+
+
+# ============================================================================
+# Feedback Endpoint
+# ============================================================================
+
+@app.post("/logistics/feedback")
+async def submit_recommendation_feedback(payload: RecommendationFeedbackPayload):
+    """
+    Submit feedback on risk mitigation recommendations.
+    
+    Currently logs feedback for analysis. Backend storage will be implemented later.
+    """
+    logger.info("=" * 60)
+    logger.info("RECOMMENDATION FEEDBACK RECEIVED")
+    logger.info("=" * 60)
+    logger.info("Flight ID: %s", payload.flightId)
+    logger.info("Flight Number: %s", payload.flightNumber)
+    logger.info("Timestamp: %s", payload.timestamp)
+    logger.info("Votes: %s", json.dumps(payload.votes, indent=2))
+    if payload.comment:
+        logger.info("Comment: %s", payload.comment)
+    logger.info("=" * 60)
+    
+    # TODO: Persist feedback to database/storage
+    # For now, just acknowledge receipt
+    
+    return {
+        "status": "received",
+        "message": "Feedback logged successfully. Thank you!",
+        "flightNumber": payload.flightNumber,
+        "votesReceived": len(payload.votes),
     }
 
 

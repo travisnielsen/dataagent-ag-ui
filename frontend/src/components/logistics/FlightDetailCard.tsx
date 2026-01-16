@@ -143,26 +143,22 @@ export function FlightDetailCard({ flight, themeColor, onClose }: FlightDetailCa
           </div>
         </div>
 
-        {/* Recommendations for risk flights */}
+        {/* Recommendations moved to chat via show_risk_recommendations tool */}
         {(flight.riskLevel === 'high' || flight.riskLevel === 'critical') && (
-          <div className="mt-6 p-4 bg-red-500/20 border border-red-500/30 rounded-lg">
-            <h4 className="text-white font-semibold mb-2">⚠️ Risk Mitigation Recommendations</h4>
-            <ul className="text-sm text-gray-200 space-y-1">
-              <li>• Consider redistributing cargo to under-utilized flights</li>
-              <li>• Review shipment priorities for possible deferrals</li>
-              <li>• Contact operations for capacity expansion options</li>
-            </ul>
+          <div className="mt-6 p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg">
+            <p className="text-sm text-amber-200 flex items-center gap-2">
+              <span>⚠️</span>
+              <span>This flight has elevated risk. Ask the assistant for mitigation recommendations.</span>
+            </p>
           </div>
         )}
 
         {flight.riskLevel === 'low' && (
-          <div className="mt-6 p-4 bg-blue-500/20 border border-blue-500/30 rounded-lg">
-            <h4 className="text-white font-semibold mb-2">💡 Optimization Opportunity</h4>
-            <ul className="text-sm text-gray-200 space-y-1">
-              <li>• This flight has significant available capacity</li>
-              <li>• Consider consolidating shipments from over-utilized routes</li>
-              <li>• Opportunity for cost optimization through better load balancing</li>
-            </ul>
+          <div className="mt-6 p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg">
+            <p className="text-sm text-blue-200 flex items-center gap-2">
+              <span>💡</span>
+              <span>This flight has available capacity. Ask the assistant for optimization suggestions.</span>
+            </p>
           </div>
         )}
       </div>

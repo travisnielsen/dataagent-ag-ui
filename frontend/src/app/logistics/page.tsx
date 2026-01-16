@@ -2,14 +2,16 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { AuthButton } from "@/components/AuthButton";
-import { LogisticsAgentState, Flight, DashboardFilter, initialLogisticsState, DataSummary } from "@/lib/logistics-types";
+import { LogisticsAgentState, Flight, DashboardFilter, initialLogisticsState, DataSummary, RecommendationsResult, FeedbackPayload } from "@/lib/logistics-types";
 import { useLogisticsData } from "@/lib/useLogisticsData";
-import { useCoAgent, useCopilotAction, useCoAgentStateRender, useRenderToolCall } from "@copilotkit/react-core";
+import { useCoAgent, useCopilotAction, useCoAgentStateRender, useRenderToolCall, useCopilotChat } from "@copilotkit/react-core";
 import { useAgent } from "@copilotkit/react-core/v2";
 import { CopilotKitCSSProperties, CopilotChat } from "@copilotkit/react-ui";
+import { TextMessage, MessageRole } from "@copilotkit/runtime-client-gql";
 import { FlightListCard } from "@/components/logistics/FlightListCard";
 import { FlightDetailCard } from "@/components/logistics/FlightDetailCard";
 import { HistoricalChart } from "@/components/logistics/HistoricalChart";
+import { RiskBadge } from "@/components/logistics/RiskBadge";
 export default function LogisticsPage() {
   const [themeColor, setThemeColor] = useState("#1e3a5f"); // Dark navy blue for logistics
 
@@ -140,32 +142,12 @@ function LogisticsDashboard({ themeColor }: { themeColor: string }) {
   // Combined loading state: agent running OR fetching REST data
   const isUpdating = isAgentRunning || isFetchingData;
   
-  // Dynamic maxFlights based on available viewport height
+  // Default to 10 flights visible
   const getDefaultMaxFlights = () => {
-    if (typeof window === 'undefined') return 5;
-    // Approximate row height ~60px, header ~200px, chart ~280px
-    const availableHeight = window.innerHeight - 480;
-    return availableHeight >= 600 ? 10 : 5;  // Large screens (1080p+) get 10, others get 5
+    return 10;
   };
   
   const [maxFlights, setMaxFlights] = useState(getDefaultMaxFlights);
-  
-  // Update maxFlights on window resize
-  useEffect(() => {
-    const handleResize = () => {
-      const newDefault = getDefaultMaxFlights();
-      setMaxFlights((current) => {
-        // Only auto-update if user hasn't manually changed it
-        if (current === 5 || current === 10) {
-          return newDefault;
-        }
-        return current;
-      });
-    };
-    
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
 
   // 🪁 REST Data Fetching: Load initial data from REST API
   const { 
@@ -363,6 +345,208 @@ function LogisticsDashboard({ themeColor }: { themeColor: string }) {
               <span className="text-cyan-400">🔮</span>
               <span className="text-cyan-300">Predictions ready{route ? ` for ${route}` : ''}</span>
             </>
+          )}
+        </div>
+      );
+    },
+  });
+
+  // 🪁 Backend Tool Rendering: Risk Mitigation Recommendations with Feedback
+  // This renders an interactive card when the agent calls show_risk_recommendations
+  useRenderToolCall({
+    name: "show_risk_recommendations",
+    render: function RecommendationsCard({ args, status, result }) {
+      // Local state for feedback - single vote for all recommendations
+      const [vote, setVote] = useState<'up' | 'down' | null>(null);
+      const [comment, setComment] = useState('');
+      const [submitted, setSubmitted] = useState(false);
+      const [submitting, setSubmitting] = useState(false);
+
+      // Loading state
+      if (status !== 'complete') {
+        return (
+          <div className="p-4 my-2 rounded-xl bg-amber-500/10 border border-amber-500/20">
+            <div className="flex items-center gap-3">
+              <div className="w-5 h-5 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
+              <span className="text-amber-300">Generating recommendations...</span>
+            </div>
+          </div>
+        );
+      }
+
+      // Handle error or no result
+      if (!result) {
+        return (
+          <div className="p-4 my-2 rounded-xl bg-red-500/10 border border-red-500/20">
+            <span className="text-red-300">Unable to generate recommendations</span>
+          </div>
+        );
+      }
+
+      const data = result as RecommendationsResult;
+
+      // Handle error from backend
+      if ('error' in data && data.error) {
+        return (
+          <div className="p-4 my-2 rounded-xl bg-amber-500/10 border border-amber-500/20">
+            <span className="text-amber-300">{String(data.error)}</span>
+          </div>
+        );
+      }
+
+      // No recommendations needed (optimal utilization)
+      if (!data.recommendations || data.recommendations.length === 0) {
+        return (
+          <div className="p-4 my-2 rounded-xl bg-green-500/10 border border-green-500/20">
+            <div className="flex items-center gap-2">
+              <span className="text-xl">✅</span>
+              <div>
+                <p className="text-green-300 font-medium">{data.flightNumber} - Optimal</p>
+                <p className="text-green-400/80 text-sm">{data.message || `Flight is at ${data.utilizationPercent?.toFixed(1)}% utilization. No action needed.`}</p>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      const handleVote = (newVote: 'up' | 'down') => {
+        // Toggle off if same vote, otherwise set new vote
+        setVote(prev => prev === newVote ? null : newVote);
+      };
+
+      const handleSubmit = async () => {
+        if (!vote && !comment.trim()) {
+          return; // Nothing to submit
+        }
+
+        setSubmitting(true);
+        
+        const payload: FeedbackPayload = {
+          flightId: data.flightId,
+          flightNumber: data.flightNumber,
+          votes: vote ? { overall: vote } : {},
+          comment: comment.trim() || undefined,
+          timestamp: new Date().toISOString(),
+        };
+
+        try {
+          const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+          const response = await fetch(`${apiUrl}/logistics/feedback`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+
+          if (response.ok) {
+            setSubmitted(true);
+          } else {
+            console.error('Failed to submit feedback:', await response.text());
+          }
+        } catch (error) {
+          console.error('Error submitting feedback:', error);
+        } finally {
+          setSubmitting(false);
+        }
+      };
+
+      // Determine card color based on risk level
+      const isHighRisk = data.riskLevel === 'high' || data.riskLevel === 'critical';
+      const cardBg = isHighRisk ? 'bg-red-500/10' : 'bg-blue-500/10';
+      const cardBorder = isHighRisk ? 'border-red-500/30' : 'border-blue-500/30';
+      const titleIcon = isHighRisk ? '⚠️' : '💡';
+      const titleText = isHighRisk ? 'Risk Mitigation Recommendations' : 'Optimization Suggestions';
+
+      return (
+        <div className={`p-4 my-2 rounded-xl ${cardBg} border ${cardBorder} space-y-3`}>
+          {/* Header */}
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="text-xl">{titleIcon}</span>
+              <h4 className="font-semibold text-white">{titleText}</h4>
+            </div>
+            <div className="flex items-center gap-2 pl-7">
+              <span className="text-sm text-gray-300">{data.flightNumber}</span>
+              <span className="text-sm text-gray-400">({data.route})</span>
+            </div>
+          </div>
+
+          {/* Recommendations list */}
+          <div className="space-y-2">
+            {data.recommendations.map((rec) => (
+              <div 
+                key={rec.id} 
+                className="p-3 bg-white/5 rounded-lg"
+              >
+                <span className="text-gray-200 text-sm">{rec.text}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Feedback section */}
+          {!submitted ? (
+            <div className="space-y-3 pt-3 border-t border-white/10">
+              {/* Single vote for all recommendations */}
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-gray-400">Were these recommendations helpful?</span>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => handleVote('up')}
+                    disabled={submitted}
+                    className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all ${
+                      vote === 'up' 
+                        ? 'bg-green-500/30 text-green-300 border border-green-500/50' 
+                        : 'bg-white/5 hover:bg-white/10 text-gray-400 hover:text-green-300 border border-white/10'
+                    }`}
+                  >
+                    <span>👍</span>
+                    <span className="text-sm">Yes</span>
+                  </button>
+                  <button
+                    onClick={() => handleVote('down')}
+                    disabled={submitted}
+                    className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all ${
+                      vote === 'down' 
+                        ? 'bg-red-500/30 text-red-300 border border-red-500/50' 
+                        : 'bg-white/5 hover:bg-white/10 text-gray-400 hover:text-red-300 border border-white/10'
+                    }`}
+                  >
+                    <span>👎</span>
+                    <span className="text-sm">No</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Comment field */}
+              <textarea
+                value={comment}
+                onChange={(e) => setComment(e.target.value)}
+                placeholder="Additional feedback or suggestions... (optional)"
+                className="w-full p-2 rounded-lg bg-white/5 border border-white/10 text-white placeholder-gray-500 text-sm resize-none focus:outline-none focus:border-white/30"
+                rows={2}
+              />
+
+              {/* Submit button */}
+              <div className="flex justify-end">
+                <button
+                  onClick={handleSubmit}
+                  disabled={submitting || (!vote && !comment.trim())}
+                  className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                    submitting || (!vote && !comment.trim())
+                      ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                      : 'bg-blue-500 hover:bg-blue-600 text-white'
+                  }`}
+                >
+                  {submitting ? 'Submitting...' : 'Submit Feedback'}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="pt-3 border-t border-white/10">
+              <div className="flex items-center gap-2 text-green-400">
+                <span>✓</span>
+                <span className="text-sm">Thank you for your feedback!</span>
+              </div>
+            </div>
           )}
         </div>
       );
@@ -670,8 +854,11 @@ function LogisticsDashboard({ themeColor }: { themeColor: string }) {
     },
   }, [setSelectedFlight, setSelectedRoute, setState]);
 
+  // Hook for programmatic chat messages
+  const { appendMessage } = useCopilotChat();
+
   // Handle flight selection from the list
-  const handleSelectFlight = (flight: Flight) => {
+  const handleSelectFlight = async (flight: Flight) => {
     setSelectedFlight(flight);
     setSelectedRoute(`${flight.from} → ${flight.to}`);
     
@@ -680,6 +867,24 @@ function LogisticsDashboard({ themeColor }: { themeColor: string }) {
       ...prev,
       selectedFlight: flight,
     }));
+
+    // 🪁 Auto-trigger recommendations for flights that have them (high, critical, or low risk)
+    const hasRecommendations = flight.riskLevel === 'high' || flight.riskLevel === 'critical' || flight.riskLevel === 'low';
+    if (hasRecommendations) {
+      // Small delay to ensure state is synced before sending message
+      setTimeout(async () => {
+        try {
+          await appendMessage(
+            new TextMessage({
+              role: MessageRole.User,
+              content: `Show recommendations for flight ${flight.flightNumber}`,
+            })
+          );
+        } catch (err) {
+          console.error('[handleSelectFlight] Error triggering recommendations:', err);
+        }
+      }, 100);
+    }
   };
 
   // Handle closing the detail view
@@ -767,9 +972,9 @@ function LogisticsDashboard({ themeColor }: { themeColor: string }) {
   return (
     <div
       style={{ backgroundColor: `${themeColor}15` }}
-      className="w-full lg:w-[70%] h-[55vh] lg:h-full rounded-xl shadow-lg overflow-auto p-4 md:p-6 transition-colors duration-300 border border-gray-700"
+      className="w-full lg:w-[70%] min-h-[55vh] lg:h-full rounded-xl shadow-lg overflow-auto p-4 md:p-6 transition-colors duration-300 border border-gray-700"
     >
-      <div className="flex flex-col gap-4 md:gap-6 h-full">
+      <div className="flex flex-col gap-4 md:gap-6">
         {/* Header */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0">
           <div>
@@ -902,10 +1107,11 @@ function LogisticsDashboard({ themeColor }: { themeColor: string }) {
           </div>
         )}
 
-        {/* Main Content Area */}
-        <div className="flex-1 flex flex-col gap-6 overflow-auto min-h-0 relative">
+        {/* Main Content Area - no internal scroll, dashboard scrolls instead */}
+        <div className="flex-1 flex flex-col gap-6 min-h-0 relative">
           {/* 🚀 Loading overlay when agent is running or fetching data */}
-          {isUpdating && displayFlights.length > 0 && (
+          {/* Skip overlay when viewing flight details - recommendations load in chat instead */}
+          {isUpdating && displayFlights.length > 0 && !selectedFlight && (
             <div className="absolute inset-0 bg-gray-900/50 backdrop-blur-sm z-10 flex items-center justify-center rounded-lg">
               <div className="flex flex-col items-center gap-3">
                 <div className="w-8 h-8 border-3 border-blue-400 border-t-transparent rounded-full animate-spin" />
@@ -939,9 +1145,9 @@ function LogisticsDashboard({ themeColor }: { themeColor: string }) {
             />
           )}
 
-          {/* Historical Chart - Fills remaining vertical space */}
+          {/* Historical Chart - Fixed minimum height */}
           {displayHistorical && displayHistorical.length > 0 && (
-            <div className="flex-1 min-h-[300px] flex flex-col">
+            <div className="min-h-[300px] h-[300px] flex flex-col">
               <HistoricalChart
                 data={getFilteredHistoricalData()}
                 themeColor={themeColor}

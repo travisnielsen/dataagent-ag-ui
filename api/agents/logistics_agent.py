@@ -435,6 +435,132 @@ def get_flight_details(
     }
 
 
+def _get_flight_by_id_or_number(identifier: str) -> dict | None:
+    """Helper to find a flight by ID or flight number."""
+    all_flights = _get_all_flights()
+    search = identifier.upper().replace(" ", "")
+    
+    for flight in all_flights:
+        if flight.get("id") == identifier or flight.get("flightNumber", "").upper() == search:
+            return flight
+    return None
+
+
+@ai_function(
+    name="show_risk_recommendations",
+    description="Display risk mitigation recommendations for a high-risk or critical flight. Shows interactive recommendations in the chat with feedback options. Use when user asks about recommendations, mitigation strategies, or what to do about a risky flight. Can also show optimization suggestions for under-utilized (low risk) flights.",
+)
+def show_risk_recommendations(
+    flight_id: Annotated[
+        str | None,
+        Field(description="ID or flight number of the flight to show recommendations for. If not provided, uses the currently selected flight from the UI."),
+    ] = None,
+) -> dict:
+    """Generate and return recommendations for a flight. Rendered as interactive card in chat."""
+    from datetime import datetime
+    
+    # Determine which flight to analyze
+    flight = None
+    
+    # Priority 1: Explicit flight_id parameter
+    if flight_id:
+        flight = _get_flight_by_id_or_number(flight_id)
+    
+    # Priority 2: Currently selected flight from UI
+    if not flight:
+        selected = current_selected_flight.get()
+        if selected:
+            flight = selected
+    
+    if not flight:
+        return {
+            "error": "No flight specified or selected. Please select a flight or provide a flight number.",
+            "recommendations": [],
+        }
+    
+    flight_number = flight.get("flightNumber", "unknown")
+    risk_level = flight.get("riskLevel", "medium")
+    utilization = flight.get("utilizationPercent", 0)
+    route = f"{flight.get('from', '?')} → {flight.get('to', '?')}"
+    
+    # Generate recommendations based on risk level
+    recommendations = []
+    
+    if risk_level in ("high", "critical"):
+        # High/critical risk - mitigation recommendations
+        recommendations = [
+            {
+                "id": "rec-redistribute",
+                "text": "Redistribute cargo to under-utilized flights on similar routes",
+                "category": "redistribution",
+            },
+            {
+                "id": "rec-defer",
+                "text": "Review shipment priorities and defer non-critical packages to next available flight",
+                "category": "deferral",
+            },
+            {
+                "id": "rec-expand",
+                "text": "Contact operations to explore capacity expansion options (larger aircraft, additional flight)",
+                "category": "expansion",
+            },
+        ]
+        
+        # Add specific recommendations based on utilization
+        if utilization > 95:
+            recommendations.insert(0, {
+                "id": "rec-immediate",
+                "text": f"URGENT: Flight is at {utilization:.1f}% capacity. Immediate action required to prevent delays",
+                "category": "redistribution",
+            })
+    
+    elif risk_level == "low":
+        # Low risk - optimization recommendations  
+        recommendations = [
+            {
+                "id": "rec-consolidate",
+                "text": "Consolidate shipments from over-utilized routes to maximize this flight's capacity",
+                "category": "consolidation",
+            },
+            {
+                "id": "rec-cost-opt",
+                "text": "Opportunity for cost optimization through better load balancing across network",
+                "category": "optimization",
+            },
+            {
+                "id": "rec-accept-more",
+                "text": f"Flight has {100 - utilization:.1f}% available capacity - can accept additional cargo",
+                "category": "optimization",
+            },
+        ]
+    
+    else:
+        # Medium risk - no urgent recommendations
+        return {
+            "flightId": flight.get("id", ""),
+            "flightNumber": flight_number,
+            "route": route,
+            "riskLevel": risk_level,
+            "utilizationPercent": utilization,
+            "recommendations": [],
+            "message": f"Flight {flight_number} is at optimal utilization ({utilization:.1f}%). No action needed.",
+            "generatedAt": datetime.utcnow().isoformat() + "Z",
+        }
+    
+    logger.info("[show_risk_recommendations] Generated %d recommendations for flight %s (%s risk)",
+                len(recommendations), flight_number, risk_level)
+    
+    return {
+        "flightId": flight.get("id", ""),
+        "flightNumber": flight_number,
+        "route": route,
+        "riskLevel": risk_level,
+        "utilizationPercent": utilization,
+        "recommendations": recommendations,
+        "generatedAt": datetime.utcnow().isoformat() + "Z",
+    }
+
+
 @ai_function(
     name="analyze_flights",
     description="Answer questions about flights. If user is viewing a specific flight detail card (asks about 'this flight', 'current flight', 'summarize this'), the tool automatically analyzes that selected flight. For questions about filtered/displayed flights, it uses the current dashboard filter.",
@@ -767,11 +893,18 @@ def create_logistics_agent(chat_client: ChatClientProtocol) -> AgentFrameworkAge
             Tool: analyze_flights ONLY - DO NOT also call fetch_flights
             Response: Summarize insights in 1-2 sentences
             
+            CATEGORY D - RECOMMENDATIONS:
+            Triggers: "recommendations", "what should I do", "how to fix", "mitigate", "optimize", "suggestions"
+            Tool: show_risk_recommendations
+            Response: The recommendations card will appear with feedback options. Add brief context.
+            
             IMPORTANT DISTINCTIONS:
             - "which of these are over capacity" → fetch_flights (CATEGORY A - changes view)
             - "what can you tell me about this flight" → analyze_flights ONLY (CATEGORY C - answers question)
             - "tell me about this" → analyze_flights ONLY (CATEGORY C)
             - "why is this flight over capacity" → analyze_flights ONLY (CATEGORY C)
+            - "what should I do about this flight" → show_risk_recommendations (CATEGORY D)
+            - "give me recommendations" → show_risk_recommendations (CATEGORY D)
             
             FOR QUESTIONS: Call analyze_flights with NO parameters. It automatically uses the current filter.
             DO NOT call fetch_flights after analyze_flights. The analysis is complete.
@@ -794,6 +927,8 @@ def create_logistics_agent(chat_client: ChatClientProtocol) -> AgentFrameworkAge
             clear_filter,
             # Analysis tools - answer questions about data
             analyze_flights,
+            # Recommendations with feedback
+            show_risk_recommendations,
             # Chart data tools
             get_historical_payload,
             get_predicted_payload,

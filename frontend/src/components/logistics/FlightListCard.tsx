@@ -54,7 +54,7 @@ export function FlightListCard({
   };
 
   return (
-    <div className="bg-white/10 backdrop-blur-md rounded-xl p-4 w-full overflow-hidden flex flex-col" style={{ minHeight: '240px', maxHeight: '50vh' }}>
+    <div className="bg-white/10 backdrop-blur-md rounded-xl p-4 w-full overflow-hidden flex flex-col flex-shrink-0">
       <div className="flex items-center justify-between mb-3 flex-shrink-0">
         <h2 className="text-xl font-bold text-white">Flight Shipments</h2>
         <span className="text-sm text-gray-300 whitespace-nowrap">
@@ -62,7 +62,7 @@ export function FlightListCard({
         </span>
       </div>
       
-      <div className="overflow-x-auto flex-1">
+      <div className="overflow-x-auto">
         <table className="w-full text-left">
           <thead>
             <tr className="border-b border-white/20">

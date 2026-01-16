@@ -34,6 +34,42 @@ export interface DashboardFilter {
   limit?: number | null;           // Max flights to display
 }
 
+// Recommendation for risk mitigation
+export interface Recommendation {
+  id: string;
+  text: string;
+  category: 'redistribution' | 'deferral' | 'expansion' | 'consolidation' | 'optimization';
+}
+
+// Result from show_risk_recommendations backend tool
+export interface RecommendationsResult {
+  flightId: string;
+  flightNumber: string;
+  route: string;
+  riskLevel: 'high' | 'critical' | 'low';
+  utilizationPercent: number;
+  recommendations: Recommendation[];
+  generatedAt: string;
+  message?: string;  // Optional message when no recommendations needed
+  error?: string;    // Optional error message
+}
+
+// Feedback payload for recommendations
+export interface RecommendationFeedback {
+  flightId: string;
+  flightNumber: string;
+  recommendationId: string;
+  vote: 'up' | 'down';
+}
+
+export interface FeedbackPayload {
+  flightId: string;
+  flightNumber: string;
+  votes: Record<string, 'up' | 'down'>;
+  comment?: string;
+  timestamp: string;
+}
+
 export interface LogisticsAgentState {
   flights: Flight[];
   selectedFlight: Flight | null;
