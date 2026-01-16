@@ -677,14 +677,9 @@ resource "azurerm_container_app" "frontend" {
         name  = "AGENT_API_BASE_URL"
         value = "https://${azurerm_container_app.api.ingress[0].fqdn}"
       }
-      env {
-        name  = "NEXT_PUBLIC_AZURE_AD_CLIENT_ID"
-        value = var.frontend_app_client_id
-      }
-      env {
-        name  = "NEXT_PUBLIC_AZURE_AD_TENANT_ID"
-        value = data.azurerm_client_config.current.tenant_id
-      }
+      # Note: NEXT_PUBLIC_* vars are NOT set here because they are baked into
+      # the JavaScript bundle at build time (via Docker build args in GitHub Actions).
+      # Setting them at runtime has no effect on Next.js client-side code.
     }
   }
 
