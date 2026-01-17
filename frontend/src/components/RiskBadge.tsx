@@ -1,4 +1,4 @@
-import { Flight, getRiskColor, getRiskLabel } from '@/lib/logistics-types';
+import { Flight, getRiskColor, getRiskLabel } from '@/lib/logisticsTypes';
 
 interface RiskBadgeProps {
   riskLevel: Flight['riskLevel'];

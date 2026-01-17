@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Flight, LogisticsAgentState } from '@/lib/logistics-types';
+import { Flight, LogisticsAgentState } from '@/lib/logisticsTypes';
 import { RiskBadge } from './RiskBadge';
 
 interface FlightListCardProps {
@@ -132,31 +132,68 @@ export function FlightListCard({
           <button
             onClick={() => goToPage(currentPage - 1)}
             disabled={currentPage === 1}
-            className="px-3 py-1 text-sm rounded bg-white/10 text-gray-300 hover:bg-white/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            className="px-3 py-1 text-sm rounded bg-white/10 text-gray-300 hover:bg-white/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex-shrink-0"
           >
             ← Previous
           </button>
           
-          <div className="flex items-center gap-1">
-            {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
-              <button
-                key={page}
-                onClick={() => goToPage(page)}
-                className={`w-8 h-8 text-sm rounded transition-colors ${
-                  page === currentPage
-                    ? 'bg-white/20 text-white font-semibold'
-                    : 'text-gray-400 hover:bg-white/10 hover:text-white'
-                }`}
-              >
-                {page}
-              </button>
-            ))}
+          <div className="flex items-center gap-1 overflow-hidden">
+            {(() => {
+              // Show limited page numbers with ellipsis
+              const maxVisible = 7;
+              const pages: (number | string)[] = [];
+              
+              if (totalPages <= maxVisible) {
+                // Show all pages
+                for (let i = 1; i <= totalPages; i++) pages.push(i);
+              } else {
+                // Always show first page
+                pages.push(1);
+                
+                if (currentPage > 3) {
+                  pages.push('...');
+                }
+                
+                // Show pages around current
+                const start = Math.max(2, currentPage - 1);
+                const end = Math.min(totalPages - 1, currentPage + 1);
+                
+                for (let i = start; i <= end; i++) {
+                  if (!pages.includes(i)) pages.push(i);
+                }
+                
+                if (currentPage < totalPages - 2) {
+                  pages.push('...');
+                }
+                
+                // Always show last page
+                if (!pages.includes(totalPages)) pages.push(totalPages);
+              }
+              
+              return pages.map((page, idx) => (
+                typeof page === 'string' ? (
+                  <span key={`ellipsis-${idx}`} className="px-1 text-gray-500">...</span>
+                ) : (
+                  <button
+                    key={page}
+                    onClick={() => goToPage(page)}
+                    className={`w-8 h-8 text-sm rounded transition-colors flex-shrink-0 ${
+                      page === currentPage
+                        ? 'bg-white/20 text-white font-semibold'
+                        : 'text-gray-400 hover:bg-white/10 hover:text-white'
+                    }`}
+                  >
+                    {page}
+                  </button>
+                )
+              ));
+            })()}
           </div>
           
           <button
             onClick={() => goToPage(currentPage + 1)}
             disabled={currentPage === totalPages}
-            className="px-3 py-1 text-sm rounded bg-white/10 text-gray-300 hover:bg-white/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            className="px-3 py-1 text-sm rounded bg-white/10 text-gray-300 hover:bg-white/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex-shrink-0"
           >
             Next →
           </button>

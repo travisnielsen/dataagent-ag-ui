@@ -218,7 +218,7 @@ class HistoricalResponse(BaseModel):
 
 @app.get("/logistics/data/flights", response_model=FlightsResponse)
 async def get_flights(
-    limit: int = Query(50, ge=1, le=200, description="Maximum number of flights to return"),
+    limit: int = Query(100, ge=1, le=200, description="Maximum number of flights to return"),
     offset: int = Query(0, ge=0, description="Number of flights to skip"),
     risk_level: Optional[str] = Query(None, description="Filter by risk level: low, medium, high, critical"),
     utilization: Optional[str] = Query(None, description="Filter by utilization: over (>95%), near_capacity (85-95%), optimal (50-85%), under (<50%)"),

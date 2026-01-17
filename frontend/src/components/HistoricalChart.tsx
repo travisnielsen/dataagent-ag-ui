@@ -1,4 +1,4 @@
-import { HistoricalPayload } from '@/lib/logistics-types';
+import { HistoricalPayload } from '@/lib/logisticsTypes';
 
 interface HistoricalChartProps {
   data: HistoricalPayload[];
@@ -11,7 +11,7 @@ interface HistoricalChartProps {
 export function HistoricalChart({ data, title = "Payload History & Predictions", themeColor, selectedRoute, fillHeight = false }: HistoricalChartProps) {
   if (!data || data.length === 0) {
     return (
-      <div className={`bg-white/10 backdrop-blur-md rounded-xl p-6 w-full ${fillHeight ? 'flex-1 flex flex-col' : ''}`}>
+      <div className={`bg-white/10 backdrop-blur-md rounded-xl p-6 w-full min-h-[400px] ${fillHeight ? 'flex-1 flex flex-col' : ''}`}>
         <h2 className="text-xl font-bold text-white mb-4">{title}</h2>
         <p className="text-gray-300 text-center py-8">
           No historical data available. Ask about payload history for a flight!
@@ -26,7 +26,7 @@ export function HistoricalChart({ data, title = "Payload History & Predictions",
   const maxValue = Math.max(maxPounds, maxCubicFeet);
 
   return (
-    <div className={`bg-white/10 backdrop-blur-md rounded-xl p-6 w-full ${fillHeight ? 'flex-1 flex flex-col min-h-0' : ''}`}>
+    <div className={`bg-white/10 backdrop-blur-md rounded-xl p-6 w-full min-h-[400px] ${fillHeight ? 'flex-1 flex flex-col min-h-0' : ''}`}>
       <div className="flex items-center justify-between mb-2 flex-shrink-0">
         <div>
           <h2 className="text-xl font-bold text-white">{title}</h2>

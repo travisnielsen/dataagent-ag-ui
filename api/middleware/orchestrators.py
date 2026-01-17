@@ -407,11 +407,6 @@ class DeduplicatingOrchestrator(Orchestrator):
             # Track tool call names for each ID (so we know which tools completed)
             tool_call_names: dict[str, str] = {}
             
-            # Track if a "command" tool was called (fetch_flights, clear_filter)
-            # These tools update the dashboard - suppress text responses after them
-            command_tool_called: bool = False
-            COMMAND_TOOLS = {"fetch_flights", "clear_filter"}
-            
             # Extracted state from tool results - will be emitted as StateSnapshotEvent
             extracted_state: dict = {}
             
@@ -437,17 +432,38 @@ class DeduplicatingOrchestrator(Orchestrator):
                 # Set the current active filter ContextVar for tools to access
                 # This allows analyze_flights to automatically use the current filter
                 active_filter = incoming_state.get("activeFilter")
+                from agents.logistics_agent import current_active_filter
+                
                 if active_filter:
                     # Clean up __KEEP__ sentinel values - they should be treated as None
                     cleaned_filter = {
                         k: (None if v == "__KEEP__" else v)
                         for k, v in active_filter.items()
                     }
-                    from agents.logistics_agent import current_active_filter
-                    current_active_filter.set(cleaned_filter)
-                    logger.info("[DeduplicatingOrchestrator] Set current_active_filter ContextVar: %s", cleaned_filter)
+                    
+                    # Check if there are any MEANINGFUL filter values (not just nulls)
+                    # A filter with all null values should be treated as "no filter"
+                    has_real_filter = any([
+                        cleaned_filter.get("routeFrom"),
+                        cleaned_filter.get("routeTo"),
+                        cleaned_filter.get("utilizationType"),
+                        cleaned_filter.get("riskLevel"),
+                        cleaned_filter.get("dateFrom"),
+                        cleaned_filter.get("dateTo"),
+                    ])
+                    
+                    if has_real_filter:
+                        current_active_filter.set(cleaned_filter)
+                        logger.info("[DeduplicatingOrchestrator] Set current_active_filter ContextVar: %s", cleaned_filter)
+                    else:
+                        # All filter values are null - treat as cleared
+                        current_active_filter.set(None)
+                        logger.info("[DeduplicatingOrchestrator] Cleared current_active_filter (all values null): %s", cleaned_filter)
                 else:
-                    logger.warning("[DeduplicatingOrchestrator] No activeFilter in incoming state - analyze_flights won't have context")
+                    # IMPORTANT: Clear the ContextVar when no filter is present
+                    # This handles the case when user clears filter via UI
+                    current_active_filter.set(None)
+                    logger.info("[DeduplicatingOrchestrator] Cleared current_active_filter ContextVar (no activeFilter in state)")
                 
                 # Set the current selected flight ContextVar for tools to access
                 # This allows analyze_flights to automatically analyze the selected flight
@@ -510,11 +526,6 @@ class DeduplicatingOrchestrator(Orchestrator):
                     # Track this tool call
                     seen_tool_call_ids.add(tool_call_id)
                     tool_call_names[tool_call_id] = tool_name
-                    
-                    # Mark command tools immediately - suppress text from this point
-                    if tool_name in COMMAND_TOOLS:
-                        command_tool_called = True
-                        logger.info("[DeduplicatingOrchestrator] Command tool started: %s (suppressing text)", tool_name)
                     
                     # Log ALL tool calls at INFO level to see what's happening
                     if tool_name in FRONTEND_ONLY_TOOLS:
@@ -643,8 +654,7 @@ class DeduplicatingOrchestrator(Orchestrator):
                                 for k, v in raw_filter.items()
                             }
                             extracted_state["activeFilter"] = cleaned_filter
-                            command_tool_called = True  # Suppress text responses
-                            logger.info("[DeduplicatingOrchestrator] Extracted activeFilter from %s: %s (command_tool_called=True)", 
+                            logger.info("[DeduplicatingOrchestrator] Extracted activeFilter from %s: %s", 
                                        tool_name, cleaned_filter)
                             
                             # Also update the ContextVar so subsequent tools (like analyze_flights)
@@ -665,10 +675,6 @@ class DeduplicatingOrchestrator(Orchestrator):
                 
                 # --- Text message lifecycle tracking (with buffering) ---
                 elif isinstance(event, TextMessageStartEvent):
-                    # Suppress text messages after command tools (fetch_flights, clear_filter)
-                    if command_tool_called:
-                        logger.info("[DeduplicatingOrchestrator] SUPPRESSING TextMessageStart after command tool: %s", event.message_id)
-                        continue
                     message_id = event.message_id
                     if message_id in pending_start_events or message_id in active_text_message_ids:
                         logger.debug("[DeduplicatingOrchestrator] Filtering duplicate TextMessageStartEvent: %s", message_id)
@@ -679,10 +685,6 @@ class DeduplicatingOrchestrator(Orchestrator):
                     continue  # Don't yield yet
                 
                 elif isinstance(event, TextMessageContentEvent):
-                    # Suppress text messages after command tools
-                    if command_tool_called:
-                        logger.info("[DeduplicatingOrchestrator] SUPPRESSING TextMessageContent after command tool: %s", event.delta[:50] if event.delta else "(empty)")
-                        continue
                     message_id = event.message_id
                     # If we have a pending start for this message, emit it now
                     if message_id in pending_start_events:

@@ -90,7 +90,7 @@ export const initialLogisticsState: LogisticsAgentState = {
   selectedRoute: null,
   viewMode: 'list',
   highlightRisks: true,
-  maxFlights: 50,
+  maxFlights: 100,
   activeFilter: null,
 };
 

@@ -2,16 +2,50 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { AuthButton } from "@/components/AuthButton";
-import { LogisticsAgentState, Flight, DashboardFilter, initialLogisticsState, DataSummary, RecommendationsResult, FeedbackPayload } from "@/lib/logistics-types";
+import { LogisticsAgentState, Flight, DashboardFilter, initialLogisticsState, DataSummary, RecommendationsResult, FeedbackPayload } from "@/lib/logisticsTypes";
 import { useLogisticsData } from "@/lib/useLogisticsData";
 import { useCoAgent, useCopilotAction, useCoAgentStateRender, useRenderToolCall, useCopilotChat } from "@copilotkit/react-core";
-import { useAgent } from "@copilotkit/react-core/v2";
-import { CopilotKitCSSProperties, CopilotChat } from "@copilotkit/react-ui";
-import { TextMessage, MessageRole } from "@copilotkit/runtime-client-gql";
-import { FlightListCard } from "@/components/logistics/FlightListCard";
-import { FlightDetailCard } from "@/components/logistics/FlightDetailCard";
-import { HistoricalChart } from "@/components/logistics/HistoricalChart";
-import { RiskBadge } from "@/components/logistics/RiskBadge";
+import { CopilotKitCSSProperties, CopilotChat, UserMessageProps } from "@copilotkit/react-ui";
+import { TextMessage, Role } from "@copilotkit/runtime-client-gql";
+import { FlightListCard } from "@/components/FlightListCard";
+import { FlightDetailCard } from "@/components/FlightDetailCard";
+import { HistoricalChart } from "@/components/HistoricalChart";
+import { RiskBadge } from "@/components/RiskBadge";
+
+// Prefix for system action messages - these are hidden from the chat UI but sent to the LLM
+const SYSTEM_ACTION_PREFIX = "[SYSTEM_ACTION]";
+
+// Helper to extract text content from a message
+function getMessageText(content: UserMessageProps['message']['content']): string {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .filter((part): part is { type: 'text'; text: string } => part.type === 'text')
+      .map(part => part.text)
+      .join('');
+  }
+  return '';
+}
+
+// Custom UserMessage component that hides system action messages
+function CustomUserMessage({ message, ...props }: UserMessageProps) {
+  const textContent = getMessageText(message.content);
+  
+  // Hide messages that start with the system action prefix
+  if (textContent.startsWith(SYSTEM_ACTION_PREFIX)) {
+    return null;
+  }
+  
+  // Render normal user messages with default styling
+  return (
+    <div className="flex justify-end mb-2">
+      <div className="bg-blue-600 text-white px-4 py-2 rounded-lg max-w-[80%]">
+        {textContent}
+      </div>
+    </div>
+  );
+}
+
 export default function LogisticsPage() {
   const [themeColor, setThemeColor] = useState("#1e3a5f"); // Dark navy blue for logistics
 
@@ -65,9 +99,14 @@ export default function LogisticsPage() {
       {/* Navigation Bar */}
       <nav className="h-16 px-6 flex items-center justify-between border-b border-gray-700 flex-shrink-0">
         <div className="flex items-center gap-6">
-          <span className="text-xl font-bold text-white">🪁 CopilotKit</span>
-          <a href="/" className="text-gray-300 hover:text-white transition-colors">Home</a>
-          <a href="/logistics" className="text-white font-medium transition-colors">Logistics</a>
+          <div className="flex items-center gap-2">
+            <svg className="w-6 h-6 text-blue-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M16.5 9.4l-9-5.19M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/>
+              <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+              <line x1="12" y1="22.08" x2="12" y2="12"/>
+            </svg>
+            <span className="text-xl font-bold text-white">Logistics Explorer</span>
+          </div>
           <a href="#" className="text-gray-300 hover:text-white transition-colors">Docs</a>
           <a href="#" className="text-gray-300 hover:text-white transition-colors">About</a>
         </div>
@@ -90,6 +129,7 @@ export default function LogisticsPage() {
                 title: "Logistics Assistant",
                 initial: getInitialGreeting()
               }}
+              UserMessage={CustomUserMessage}
               suggestions={[
                 {
                   title: "Over-utilized Flights",
@@ -132,15 +172,10 @@ function LogisticsDashboard({ themeColor }: { themeColor: string }) {
   // Local state for UI controls to avoid controlled/uncontrolled issues
   const [highlightRisks, setHighlightRisks] = useState(true);
   
-  // 🚀 Agent running state - detect when LLM is processing for loading indicators
-  const { agent } = useAgent({ agentId: "logistics_agent" });
-  const isAgentRunning = agent?.isRunning ?? false;
-  
   // Track when we're fetching data after activeFilter changes
+  // Note: We don't block on agent.isRunning - the chat has its own spinner
+  // This prevents the UI from blocking while waiting for LLM response text
   const [isFetchingData, setIsFetchingData] = useState(false);
-  
-  // Combined loading state: agent running OR fetching REST data
-  const isUpdating = isAgentRunning || isFetchingData;
   
   // Default to 10 flights visible
   const getDefaultMaxFlights = () => {
@@ -189,7 +224,6 @@ function LogisticsDashboard({ themeColor }: { themeColor: string }) {
     initialState: initialLogisticsState,
   });
 
-  // 🚀 Render agent state progress in chat for better UX feedback
   useCoAgentStateRender<LogisticsAgentState>({
     name: "logistics_agent",
     render: ({ state: agentState }) => {
@@ -234,9 +268,6 @@ function LogisticsDashboard({ themeColor }: { themeColor: string }) {
       if (filter?.utilization) parts.push(`(${filter.utilization})`);
       if (filter?.risk_level) parts.push(`[${filter.risk_level} risk]`);
       const filterDesc = parts.length > 0 ? parts.join(' ') : 'all flights';
-      
-      // Debug: Log render timing
-      console.log('[useRenderToolCall fetch_flights]', { status, args: filter, filterDesc });
       
       return (
         <div className="flex items-center gap-2 text-sm p-2 my-1 rounded-lg bg-blue-500/10 border border-blue-500/20">
@@ -788,6 +819,7 @@ function LogisticsDashboard({ themeColor }: { themeColor: string }) {
     },
   }, [refetchFlights, refetchHistorical, setDisplayFlights, setDisplayHistorical, setDisplayFilter, setSelectedRoute, setSelectedFlight]);
 
+  // NOTE: filter_dashboard removed - use fetch_flights (remote action) instead
   // NOTE: fetch_utilization_flights removed - use fetch_flights with utilization parameter instead
   // NOTE: fetch_flights_by_route removed - use fetch_flights with routeFrom/routeTo instead
 
@@ -876,7 +908,7 @@ function LogisticsDashboard({ themeColor }: { themeColor: string }) {
         try {
           await appendMessage(
             new TextMessage({
-              role: MessageRole.User,
+              role: Role.User,
               content: `Show recommendations for flight ${flight.flightNumber}`,
             })
           );
@@ -972,9 +1004,9 @@ function LogisticsDashboard({ themeColor }: { themeColor: string }) {
   return (
     <div
       style={{ backgroundColor: `${themeColor}15` }}
-      className="w-full lg:w-[70%] min-h-[55vh] lg:h-full rounded-xl shadow-lg overflow-auto p-4 md:p-6 transition-colors duration-300 border border-gray-700"
+      className="w-full lg:w-[70%] min-h-[55vh] lg:h-full rounded-xl shadow-lg overflow-auto p-4 md:p-6 transition-colors duration-300 border border-gray-700 flex flex-col"
     >
-      <div className="flex flex-col gap-4 md:gap-6">
+      <div className="flex flex-col gap-4 md:gap-6 flex-1 min-h-0">
         {/* Header */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0">
           <div>
@@ -1069,6 +1101,8 @@ function LogisticsDashboard({ themeColor }: { themeColor: string }) {
             )}
             <button
               onClick={async () => {
+                console.log('[Clear Button] Clicked!');
+                
                 // Clear filters and reload all data
                 setDisplayFilter(null);
                 setSelectedRoute(null);
@@ -1092,12 +1126,24 @@ function LogisticsDashboard({ themeColor }: { themeColor: string }) {
                 setLastActiveFilter(JSON.stringify(clearedFilter));
                 
                 try {
+                  console.log('[Clear Button] Fetching all flights...');
                   const flights = await refetchFlights({ limit: 100, sortBy: 'utilizationPercent', sortDesc: true });
                   const historical = await refetchHistorical();
+                  console.log('[Clear Button] Got', flights.length, 'flights');
                   setDisplayFlights(flights);
                   setDisplayHistorical(historical);
+                  
+                  // 💬 Send a hidden message to chat so it appears in conversation history
+                  // The LLM sees this but the UI hides it via CustomUserMessage
+                  console.log('[Clear Button] Sending hidden chat message...');
+                  await appendMessage(
+                    new TextMessage({
+                      role: Role.User,
+                      content: `${SYSTEM_ACTION_PREFIX} User cleared all filters via the dashboard UI. The dashboard is now showing all flights without any route, utilization, or risk filters applied.`,
+                    })
+                  );
                 } catch (err) {
-                  console.error('Error clearing filters:', err);
+                  console.error('[Clear Button] Error clearing filters:', err);
                 }
               }}
               className="ml-2 text-gray-400 hover:text-white text-sm"
@@ -1109,15 +1155,13 @@ function LogisticsDashboard({ themeColor }: { themeColor: string }) {
 
         {/* Main Content Area - no internal scroll, dashboard scrolls instead */}
         <div className="flex-1 flex flex-col gap-6 min-h-0 relative">
-          {/* 🚀 Loading overlay when agent is running or fetching data */}
-          {/* Skip overlay when viewing flight details - recommendations load in chat instead */}
-          {isUpdating && displayFlights.length > 0 && !selectedFlight && (
+          {/* 🚀 Loading overlay only when fetching REST data */}
+          {/* The chat has its own spinner for agent processing */}
+          {isFetchingData && displayFlights.length > 0 && !selectedFlight && (
             <div className="absolute inset-0 bg-gray-900/50 backdrop-blur-sm z-10 flex items-center justify-center rounded-lg">
               <div className="flex flex-col items-center gap-3">
                 <div className="w-8 h-8 border-3 border-blue-400 border-t-transparent rounded-full animate-spin" />
-                <span className="text-sm text-gray-300">
-                  {isAgentRunning ? 'Processing request...' : 'Loading flights...'}
-                </span>
+                <span className="text-sm text-gray-300">Loading flights...</span>
               </div>
             </div>
           )}
@@ -1145,9 +1189,9 @@ function LogisticsDashboard({ themeColor }: { themeColor: string }) {
             />
           )}
 
-          {/* Historical Chart - Fixed minimum height */}
+          {/* Historical Chart - Fills remaining height on larger screens */}
           {displayHistorical && displayHistorical.length > 0 && (
-            <div className="min-h-[300px] h-[300px] flex flex-col">
+            <div className="min-h-[300px] lg:flex-1 flex flex-col">
               <HistoricalChart
                 data={getFilteredHistoricalData()}
                 themeColor={themeColor}

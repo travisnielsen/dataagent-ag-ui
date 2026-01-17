@@ -1,4 +1,4 @@
-import { Flight } from '@/lib/logistics-types';
+import { Flight } from '@/lib/logisticsTypes';
 import { RiskBadge } from './RiskBadge';
 
 interface FlightDetailCardProps {

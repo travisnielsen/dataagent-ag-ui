@@ -230,7 +230,7 @@ def fetch_flights(
     ] = None,
     limit: Annotated[
         int | None,
-        Field(description="Max flights to return (default 20, max 100)"),
+        Field(description="Max flights to return (default 100, max 100)"),
     ] = None,
     reset: Annotated[
         bool,
@@ -238,7 +238,7 @@ def fetch_flights(
     ] = True,
 ) -> dict:
     """Set the filter state. Frontend reacts and fetches data via REST API."""
-    max_limit = min(limit or 20, 100) if limit else 20
+    max_limit = min(limit or 100, 100) if limit else 100
     
     # Build the filter object that frontend will use
     # When reset=false, None values mean "keep existing" (frontend handles merge)
@@ -252,6 +252,15 @@ def fetch_flights(
         "limit": max_limit,
         "reset": reset,
     }
+    
+    # CRITICAL: Update the current_active_filter ContextVar so that if analyze_flights
+    # is called in the same turn, it uses the NEW filter, not the old one from request start
+    cleaned_filter = {
+        k: (None if v == "__KEEP__" else v)
+        for k, v in active_filter.items()
+    }
+    current_active_filter.set(cleaned_filter)
+    logger.info("[fetch_flights] Updated current_active_filter ContextVar: %s", cleaned_filter)
     
     # Build description for user
     filter_parts = []
@@ -289,17 +298,25 @@ def clear_filter(
     """Clear all filters. Frontend reacts and fetches all data via REST API."""
     max_limit = min(limit or 100, 100) if limit else 100
     
+    # Clear the current_active_filter ContextVar to None (not a dict with nulls)
+    # This ensures analyze_flights sees no filter is active
+    current_active_filter.set(None)
+    logger.info("[clear_filter] Cleared current_active_filter ContextVar to None")
+    
+    # Return cleared filter object for frontend state
+    cleared_filter = {
+        "routeFrom": None,
+        "routeTo": None,
+        "utilizationType": None,
+        "riskLevel": None,
+        "dateFrom": None,
+        "dateTo": None,
+        "limit": max_limit,
+    }
+    
     return {
         "message": f"Clearing all filters. Loading up to {max_limit} flights...",
-        "activeFilter": {
-            "routeFrom": None,
-            "routeTo": None,
-            "utilizationType": None,
-            "riskLevel": None,
-            "dateFrom": None,
-            "dateTo": None,
-            "limit": max_limit,
-        },
+        "activeFilter": cleared_filter,
     }
 
 
@@ -563,20 +580,24 @@ def show_risk_recommendations(
 
 @ai_function(
     name="analyze_flights",
-    description="Answer questions about flights. If user is viewing a specific flight detail card (asks about 'this flight', 'current flight', 'summarize this'), the tool automatically analyzes that selected flight. For questions about filtered/displayed flights, it uses the current dashboard filter.",
+    description="""Answer questions about flights by analyzing data. 
+    
+CRITICAL: When the user's question mentions a SPECIFIC utilization type or risk level, you MUST pass it as a parameter:
+- "how many flights are near capacity?" → utilization_filter="near_capacity"
+- "which routes are over capacity?" → utilization_filter="over"  
+- "how many high risk flights?" → risk_level="high"
+- "tell me about critical risk flights" → risk_level="critical"
+
+Only use no parameters when the question is about "all flights" or "these flights" (current view) with no specific filter mentioned.""",
 )
 def analyze_flights(
-    use_current_filter: Annotated[
-        bool,
-        Field(description="True = analyze only flights matching current UI filter (from context). False = analyze all flights."),
-    ] = False,
-    displayed_flight_ids: Annotated[
-        list[str] | None,
-        Field(description="Optional: specific flight IDs to analyze. Only use if explicitly provided in context."),
-    ] = None,
     utilization_filter: Annotated[
         str | None,
-        Field(description="Utilization filter: 'over', 'near_capacity', 'optimal', 'under', or null for all."),
+        Field(description="REQUIRED when question mentions utilization. Use: 'over', 'near_capacity', 'optimal', 'under'. Example: 'near capacity flights' → 'near_capacity'"),
+    ] = None,
+    risk_level: Annotated[
+        str | None,
+        Field(description="REQUIRED when question mentions risk. Use: 'critical', 'high', 'medium', 'low'. Example: 'high risk flights' → 'high'"),
     ] = None,
     route_from: Annotated[
         str | None,
@@ -585,10 +606,6 @@ def analyze_flights(
     route_to: Annotated[
         str | None,
         Field(description="Destination airport code filter (e.g., 'ORD'), or null for all destinations."),
-    ] = None,
-    risk_level: Annotated[
-        str | None,
-        Field(description="Risk level filter: 'low', 'medium', 'high', 'critical', or null for all."),
     ] = None,
     date_from: Annotated[
         str | None,
@@ -603,13 +620,23 @@ def analyze_flights(
         Field(description="The user's question about the data."),
     ] = "general summary",
 ) -> dict:
-    """Analyze flight data based on selected flight, current filter, or explicit parameters."""
+    """Analyze flight data based on explicit parameters. Pass filter params when question mentions specific criteria."""
     all_flights = _get_all_flights()
+    
+    # Log what parameters were passed
+    logger.info("[analyze_flights] Called with: utilization=%s, risk=%s, route=%s->%s, question=%s",
+                utilization_filter, risk_level, route_from, route_to, question)
+    
+    # Get current filter from ContextVar (set by orchestrator at request start)
+    active_filter = current_active_filter.get()
+    selected_flight = current_selected_flight.get()
+    
+    logger.info("[analyze_flights] ContextVar state: active_filter=%s, selected_flight=%s",
+                active_filter, selected_flight.get('flightNumber') if selected_flight else None)
     
     # PRIORITY 1: Check if user has a specific flight selected (viewing detail card)
     # If so, analyze just that flight - this handles "tell me about this flight" queries
-    selected_flight = current_selected_flight.get()
-    if selected_flight and not any([displayed_flight_ids, utilization_filter, route_from, route_to, risk_level, date_from, date_to]):
+    if selected_flight and not any([utilization_filter, route_from, route_to, risk_level, date_from, date_to]):
         flight_number = selected_flight.get('flightNumber', 'unknown')
         logger.info("[analyze_flights] Analyzing selected flight: %s", flight_number)
         
@@ -658,16 +685,33 @@ def analyze_flights(
     
     # PRIORITY 2: Use current dashboard filter if no explicit filters provided
     # This ensures we analyze exactly what the user sees without LLM needing to pass params
-    active_filter = current_active_filter.get()
-    logger.info("[analyze_flights] Called with: route_from=%s, route_to=%s, utilization=%s, active_filter=%s, selected_flight=%s",
-                route_from, route_to, utilization_filter, active_filter, selected_flight.get('flightNumber') if selected_flight else None)
     
     # Helper to clean __KEEP__ sentinel values (fallback in case orchestrator didn't clean them)
     def clean_value(v):
         return None if v == "__KEEP__" else v
     
-    if active_filter and not any([use_current_filter, displayed_flight_ids, utilization_filter, route_from, route_to, risk_level]):
-        # No explicit filters - use current dashboard filter automatically
+    # Check if active_filter has any meaningful (non-null) filter values
+    # A cleared filter with all None values should be treated as "no filter"
+    def has_meaningful_filter(f):
+        if not f:
+            return False
+        # Check if any filter field has a non-null value (excluding limit)
+        return any([
+            f.get("routeFrom"),
+            f.get("routeTo"),
+            f.get("utilizationType"),
+            f.get("riskLevel"),
+            f.get("dateFrom"),
+            f.get("dateTo"),
+        ])
+    
+    has_active_filter = has_meaningful_filter(active_filter)
+    logger.info("[analyze_flights] has_meaningful_filter=%s", has_active_filter)
+    
+    # Only use dashboard filter if NO explicit params were passed AND there's a meaningful filter
+    # This prevents stale filter context from affecting results when user passes explicit criteria
+    if has_active_filter and not any([utilization_filter, route_from, route_to, risk_level, date_from, date_to]):
+        # No explicit filters passed - use current dashboard filter automatically
         logger.info("[analyze_flights] Using current dashboard filter automatically")
         route_from = clean_value(active_filter.get("routeFrom"))
         route_to = clean_value(active_filter.get("routeTo"))
@@ -677,20 +721,9 @@ def analyze_flights(
         date_to = clean_value(active_filter.get("dateTo"))
         logger.info("[analyze_flights] After applying filter: route=%s->%s, util=%s, risk=%s",
                     route_from, route_to, utilization_filter, risk_level)
-    elif use_current_filter and active_filter:
-        # Explicit request to use current filter
-        route_from = route_from or clean_value(active_filter.get("routeFrom"))
-        route_to = route_to or clean_value(active_filter.get("routeTo"))
-        utilization_filter = utilization_filter or clean_value(active_filter.get("utilizationType"))
-        risk_level = risk_level or clean_value(active_filter.get("riskLevel"))
-        date_from = date_from or clean_value(active_filter.get("dateFrom"))
-        date_to = date_to or clean_value(active_filter.get("dateTo"))
     
     # Start with all flights
-    if displayed_flight_ids:
-        flights = [f for f in all_flights if f.get('id') in displayed_flight_ids]
-    else:
-        flights = all_flights
+    flights = all_flights
     
     # Apply utilization filter
     if utilization_filter == 'over':
@@ -720,8 +753,6 @@ def analyze_flights(
     
     if not flights:
         filter_parts = []
-        if displayed_flight_ids:
-            filter_parts.append(f"from {len(displayed_flight_ids)} displayed flights")
         if utilization_filter:
             filter_parts.append(f"utilization={utilization_filter}")
         if route_from:
@@ -759,8 +790,6 @@ def analyze_flights(
     
     # Build filter description
     filter_parts = []
-    if displayed_flight_ids:
-        filter_parts.append(f"analyzing {len(displayed_flight_ids)} displayed flights")
     if utilization_filter:
         filter_parts.append(f"utilization={utilization_filter}")
     if route_from:
@@ -771,9 +800,18 @@ def analyze_flights(
         filter_parts.append(f"risk={risk_level}")
     if date_from or date_to:
         filter_parts.append(f"dates={date_from or '*'} to {date_to or '*'}")
-    filter_str = f" (filter: {', '.join(filter_parts)})" if filter_parts else " (all flights)"
     
-    analysis = f"""Analysis of {total} flights{filter_str}:
+    # Make it clear to the LLM what data scope we're analyzing
+    if filter_parts:
+        filter_str = f" (filtered by: {', '.join(filter_parts)})"
+        scope_msg = f"Analyzing {total} flights with {', '.join(filter_parts)}"
+    else:
+        filter_str = " (ALL flights in system - no filter applied)"
+        scope_msg = f"Analyzing ALL {total} flights in the system (no route or utilization filter active)"
+    
+    logger.info("[analyze_flights] %s", scope_msg)
+    
+    analysis = f"""{scope_msg}:
 - Average utilization: {avg_util:.1f}%
 - Risk levels: {critical} critical, {high} high, {medium} medium, {low} low
 - Top route: {top_route[0]} with {top_route[1]} flights
@@ -875,56 +913,73 @@ def create_logistics_agent(chat_client: ChatClientProtocol) -> AgentFrameworkAge
 
             CRITICAL: You MUST call a tool for EVERY user request. NEVER respond with just text.
             
-            TOOL SELECTION - MUTUALLY EXCLUSIVE:
-            Choose ONE category based on user intent. NEVER mix categories.
+            TOOL SELECTION:
             
             CATEGORY A - COMMANDS (change what's displayed):
-            Triggers: "show me", "load", "filter", "display", "which", "find"
-            Tool: fetch_flights (updates dashboard)
-            Response: NO text - dashboard updates automatically
+            Triggers: "show me", "load", "filter", "display", "find"
+            Tool: fetch_flights (filters dashboard - frontend fetches via REST API)
+            Response: Brief confirmation after tool completes
             
             CATEGORY B - RESET:
             Triggers: "show all", "reset", "clear", "start over"
-            Tool: clear_filter
-            Response: NO text
+            Tool: clear_filter (clears all filters)
+            Response: Brief confirmation
             
-            CATEGORY C - QUESTIONS (analyze what's displayed):
-            Triggers: "what", "why", "how many", "tell me", "analyze", "insights", "explain", "describe"
-            Tool: analyze_flights ONLY - DO NOT also call fetch_flights
+            CATEGORY C - QUESTIONS ABOUT SPECIFIC SUBSETS:
+            When user asks about flights with SPECIFIC criteria (utilization type, risk level, route):
+            - "how many flights are near capacity?" 
+            - "which routes are over capacity?"
+            - "what high risk flights are there?"
+            
+            IMPORTANT: Call BOTH tools in sequence:
+            1. fetch_flights - to update the dashboard to show those flights
+            2. analyze_flights - to get the analysis for your response
+            
+            This ensures the dashboard reflects what you're talking about.
+            
+            CATEGORY D - GENERAL QUESTIONS (about current view):
+            Triggers: "tell me about these", "what can you see", "analyze this", "insights"
+            Tool: analyze_flights ONLY (no filter change needed - analyze current view)
             Response: Summarize insights in 1-2 sentences
             
-            CATEGORY D - RECOMMENDATIONS:
-            Triggers: "recommendations", "what should I do", "how to fix", "mitigate", "optimize", "suggestions"
+            CATEGORY E - RECOMMENDATIONS:
+            Triggers: "recommendations", "what should I do", "how to fix", "mitigate", "optimize"
             Tool: show_risk_recommendations
-            Response: The recommendations card will appear with feedback options. Add brief context.
+            Response: The recommendations card will appear with feedback options.
             
-            IMPORTANT DISTINCTIONS:
-            - "which of these are over capacity" → fetch_flights (CATEGORY A - changes view)
-            - "what can you tell me about this flight" → analyze_flights ONLY (CATEGORY C - answers question)
-            - "tell me about this" → analyze_flights ONLY (CATEGORY C)
-            - "why is this flight over capacity" → analyze_flights ONLY (CATEGORY C)
-            - "what should I do about this flight" → show_risk_recommendations (CATEGORY D)
-            - "give me recommendations" → show_risk_recommendations (CATEGORY D)
-            
-            FOR QUESTIONS: Call analyze_flights with NO parameters. It automatically uses the current filter.
-            DO NOT call fetch_flights after analyze_flights. The analysis is complete.
+            EXAMPLES:
+            - "show me LAX to ORD" → fetch_flights(route_from="LAX", route_to="ORD")
+            - "how many flights are near capacity?" → fetch_flights(utilization="near_capacity") THEN analyze_flights(utilization_filter="near_capacity")
+            - "which routes are over capacity?" → fetch_flights(utilization="over") THEN analyze_flights(utilization_filter="over")
+            - "tell me about these flights" → analyze_flights() (current view)
+            - "give me recommendations" → show_risk_recommendations
             
             FETCH_FLIGHTS PARAMETERS:
-            - reset=true (default): Fresh query, clears filters
-            - reset=false: Refine current view (use for "which of these", "of those")
+            - route_from: Origin airport (e.g., "LAX")
+            - route_to: Destination airport (e.g., "ORD")
+            - utilization: "over", "near_capacity", "optimal", "under"
+            - risk_level: "critical", "high", "medium", "low"
+            - limit: Number of flights (default 100, max 100)
+            
+            ANALYZE_FLIGHTS PARAMETERS:
+            - utilization_filter: "over", "near_capacity", "optimal", "under"
+            - risk_level: "critical", "high", "medium", "low"
+            - route_from, route_to: Filter by route
+            - question: The user's question
             
             UTILIZATION: over (>95%), near_capacity (85-95%), optimal (50-85%), under (<50%)
             """.strip()
         ),
         chat_client=chat_client,
         tools=[
-            # Backend tools for state updates
+            # Dashboard filter tools - these set activeFilter in state
+            # The frontend's useRenderToolCall triggers immediate REST fetch on tool start
+            fetch_flights,
+            clear_filter,
+            # Backend tools for state updates (used internally)
             update_flights,
             update_selected_flight,
             update_historical_data,
-            # Command tools - update filter state, frontend fetches via REST
-            fetch_flights,
-            clear_filter,
             # Analysis tools - answer questions about data
             analyze_flights,
             # Recommendations with feedback

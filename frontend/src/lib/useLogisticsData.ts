@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Flight, HistoricalPayload, DataSummary } from './logistics-types';
+import { Flight, HistoricalPayload, DataSummary } from './logisticsTypes';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -55,7 +55,7 @@ export interface FetchFlightsParams {
  * Custom hook for fetching logistics data from REST API.
  * Loads initial data on mount and provides refetch functions for updates.
  */
-export function useLogisticsData(initialLimit: number = 50): UseLogisticsDataResult {
+export function useLogisticsData(initialLimit: number = 100): UseLogisticsDataResult {
   const [flights, setFlights] = useState<Flight[]>([]);
   const [historicalData, setHistoricalData] = useState<HistoricalPayload[]>([]);
   const [summary, setSummary] = useState<DataSummary | null>(null);
