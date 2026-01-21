@@ -74,7 +74,7 @@ def _build_chat_client() -> ChatClientProtocol:
             model_deployment_name=os.getenv("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4o-mini"),
         )
         # Add middleware to manage response ID -> thread ID mapping for v2 Responses API
-        client.middleware = ResponsesApiThreadMiddleware()
+        client.middleware = [ResponsesApiThreadMiddleware()]
         return client
 
     except Exception as exc:  # pragma: no cover

@@ -22,6 +22,7 @@ dependencies = [
     { name = "agent-framework-ag-ui" },
     { name = "agent-framework-azure-ai" },
     { name = "agent-framework-core" },
+    { name = "azure-ai-projects" },
     { name = "azure-monitor-opentelemetry" },
     { name = "fastapi-azure-auth" },
     { name = "opentelemetry-instrumentation-fastapi" },
@@ -30,9 +31,10 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "agent-framework-ag-ui", git = "https://github.com/howlowck/agent-framework.git?subdirectory=python%2Fpackages%2Fag-ui&rev=feature%2Fag-ui-proper-conversation-id-run-id" },
-    { name = "agent-framework-azure-ai", git = "https://github.com/howlowck/agent-framework.git?subdirectory=python%2Fpackages%2Fazure-ai&rev=feature%2Fag-ui-proper-conversation-id-run-id" },
-    { name = "agent-framework-core", git = "https://github.com/howlowck/agent-framework.git?subdirectory=python%2Fpackages%2Fcore&rev=feature%2Fag-ui-proper-conversation-id-run-id" },
+    { name = "agent-framework-ag-ui", specifier = ">=1.0.0b260116" },
+    { name = "agent-framework-azure-ai", specifier = ">=1.0.0b260116" },
+    { name = "agent-framework-core", specifier = ">=1.0.0b260116" },
+    { name = "azure-ai-projects", specifier = ">=2.0.0b3" },
     { name = "azure-monitor-opentelemetry", specifier = ">=1.6.0" },
     { name = "fastapi-azure-auth", specifier = ">=5.0.0" },
     { name = "opentelemetry-instrumentation-fastapi", specifier = ">=0.48b0" },
@@ -41,30 +43,38 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-ag-ui"
-version = "1.0.0b260107"
-source = { git = "https://github.com/howlowck/agent-framework.git?subdirectory=python%2Fpackages%2Fag-ui&rev=feature%2Fag-ui-proper-conversation-id-run-id#5f9eec83abcf20ddd10c0ee4da6bfc9d05dc1f3e" }
+version = "1.0.0b260116"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "ag-ui-protocol" },
     { name = "agent-framework-core" },
     { name = "fastapi" },
     { name = "uvicorn" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/c2/ce/9efd5f577d6b8faa63b67a4482a3113b8d4159b230a253613a83b368c917/agent_framework_ag_ui-1.0.0b260116.tar.gz", hash = "sha256:03f6c0ae126d588c2fe4fe04ad713b2b7001fa518ccc5bc792a927f3ad21c544", size = 104720, upload-time = "2026-01-16T21:32:03.588Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/56/04/a7e6bd158ca03f266c671ad4834d2b16ed072725f67d8f6ca5f8ee6dd88a/agent_framework_ag_ui-1.0.0b260116-py3-none-any.whl", hash = "sha256:f516da4955ddbc6d1a4821e328f08ed7f81828116e2e41d30c5557ac4ad27246", size = 75545, upload-time = "2026-01-16T21:31:59.068Z" },
+]
 
 [[package]]
 name = "agent-framework-azure-ai"
-version = "1.0.0b260107"
-source = { git = "https://github.com/howlowck/agent-framework.git?subdirectory=python%2Fpackages%2Fazure-ai&rev=feature%2Fag-ui-proper-conversation-id-run-id#5f9eec83abcf20ddd10c0ee4da6bfc9d05dc1f3e" }
+version = "1.0.0b260116"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "agent-framework-core" },
     { name = "aiohttp" },
     { name = "azure-ai-agents" },
     { name = "azure-ai-projects" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/d0/25/ea48efb08fbe022edc0357a1ac3fd52542f2def6485f19aefc92d2973086/agent_framework_azure_ai-1.0.0b260116.tar.gz", hash = "sha256:b91662cb493fb6bfa59e3e800feb01c1f4e17af35797fbd95fa32a0211898da9", size = 30117, upload-time = "2026-01-16T21:32:02.191Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/51/84/f80bbd7ebb718d8925cfffe1bcaf06de7b44d27e1ba834413e5ebf13342e/agent_framework_azure_ai-1.0.0b260116-py3-none-any.whl", hash = "sha256:54facfefe04653c6eb63ada47736cdd4d93818f496f65b4879452d56e67e753a", size = 36044, upload-time = "2026-01-16T21:31:55.531Z" },
+]
 
 [[package]]
 name = "agent-framework-core"
-version = "1.0.0b260107"
-source = { git = "https://github.com/howlowck/agent-framework.git?subdirectory=python%2Fpackages%2Fcore&rev=feature%2Fag-ui-proper-conversation-id-run-id#5f9eec83abcf20ddd10c0ee4da6bfc9d05dc1f3e" }
+version = "1.0.0b260116"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "azure-identity" },
     { name = "mcp", extra = ["ws"] },
@@ -76,6 +86,10 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/0f/45/ba6cc2b61603bf64dff333131bdea2cbce31309f7da35c608e6182ec1695/agent_framework_core-1.0.0b260116.tar.gz", hash = "sha256:f8db80765a2460721ad1e752a78c63390d3ada174dc55b06b55771e46e619366", size = 300322, upload-time = "2026-01-16T21:31:50.252Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2f/35/b757c8b7446167ee20760b00c9b0f98ce9565d1e9fb1b86cba2ad3ecc7f8/agent_framework_core-1.0.0b260116-py3-none-any.whl", hash = "sha256:b8aecf5146e42e56fd01517f339db507290bd34ca907627042fdbbcbcc2ce435", size = 346138, upload-time = "2026-01-16T21:32:10.498Z" },
 ]
 
 [[package]]
@@ -250,17 +264,18 @@ wheels = [
 
 [[package]]
 name = "azure-ai-projects"
-version = "2.0.0b2"
+version = "2.0.0b3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "azure-core" },
+    { name = "azure-identity" },
     { name = "azure-storage-blob" },
     { name = "isodate" },
-    { name = "typing-extensions" },
+    { name = "openai" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f2/96/ec17f99f5ced3d82876e89b4f950d8c7466c84d79016c5905b1c03b6c484/azure_ai_projects-2.0.0b2.tar.gz", hash = "sha256:4444cc49c799359b9c25d7f59c126862053cb591b63e69ffc640774b4ceb2b73", size = 369393, upload-time = "2025-11-15T06:17:46.312Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/24/e0/3512d3f07e9dd2eb4af684387c31598c435bd87833b6a81850972963cb9c/azure_ai_projects-2.0.0b3.tar.gz", hash = "sha256:6d09ad110086e450a47b991ee8a3644f1be97fa3085d5981d543f900d78f4505", size = 431749, upload-time = "2026-01-06T05:31:25.849Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a9/41/d9a2b3eb33b4ffd9acfaa115cfd456e32d0c754227d6d78ec5d039ff75c2/azure_ai_projects-2.0.0b2-py3-none-any.whl", hash = "sha256:642496fdf9846c91f3557d39899d3893f0ce8f910334320686fc8f617492351d", size = 234023, upload-time = "2025-11-15T06:17:48.141Z" },
+    { url = "https://files.pythonhosted.org/packages/4e/b6/8fbd4786bb5c0dd19eaff86ddce0fbfb53a6f90d712038272161067a076a/azure_ai_projects-2.0.0b3-py3-none-any.whl", hash = "sha256:3b3048a3ba3904d556ba392b7bd20b6e84c93bb39df6d43a6470cdb0ad08af8c", size = 240717, upload-time = "2026-01-06T05:31:27.716Z" },
 ]
 
 [[package]]

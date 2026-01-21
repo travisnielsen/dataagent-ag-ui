@@ -5,9 +5,14 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "agent-framework-ag-ui @ git+https://github.com/howlowck/agent-framework.git@feature/ag-ui-proper-conversation-id-run-id#subdirectory=python/packages/ag-ui",
-    "agent-framework-azure-ai @ git+https://github.com/howlowck/agent-framework.git@feature/ag-ui-proper-conversation-id-run-id#subdirectory=python/packages/azure-ai",
-    "agent-framework-core @ git+https://github.com/howlowck/agent-framework.git@feature/ag-ui-proper-conversation-id-run-id#subdirectory=python/packages/core",
+    "agent-framework-ag-ui>=1.0.0b260116",
+    "agent-framework-azure-ai>=1.0.0b260116",
+    "agent-framework-core>=1.0.0b260116",
+    "azure-ai-projects>=2.0.0b3",
+    "azure-identity>=1.15.0",
+    "fastapi>=0.110.0",
+    "uvicorn>=0.27.0",
+    "pydantic>=2.0.0",
     "python-dotenv",
     "fastapi-azure-auth>=5.0.0",
     "azure-monitor-opentelemetry>=1.6.0",

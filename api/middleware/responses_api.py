@@ -101,7 +101,10 @@ class ResponsesApiThreadMiddleware(ChatMiddleware):
             stored_response_id = _thread_response_store[agui_thread_id]
             logger.debug("[ResponsesApiThreadMiddleware] CONTINUING thread %s with response_id %s", agui_thread_id, stored_response_id)
             # Set the conversation_id to the stored response_id
-            context.chat_options.conversation_id = stored_response_id
+            # context.options is a dict in the new agent-framework API
+            if context.options is None:
+                context.options = {}
+            context.options["conversation_id"] = stored_response_id
             
             # Filter messages to only send the last user message - server has the history via conversation_id
             # This prevents KeyError on call_id_to_id for tool calls from previous turns
@@ -110,7 +113,9 @@ class ResponsesApiThreadMiddleware(ChatMiddleware):
             # First request for this thread OR we cleared the response_id (e.g., after frontend tool)
             # Still need to filter out tool-related messages that CopilotKit may have sent
             logger.debug("[ResponsesApiThreadMiddleware] NEW/FRESH conversation for thread %s", agui_thread_id)
-            context.chat_options.conversation_id = None
+            if context.options is None:
+                context.options = {}
+            context.options["conversation_id"] = None
             
             # Filter out tool calls/results that would cause call_id_to_id errors
             # This removes TOOL messages and ASSISTANT messages with FunctionCallContent

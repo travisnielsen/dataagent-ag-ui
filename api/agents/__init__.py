@@ -7,4 +7,4 @@ Contains:
 
 from agents.logistics_agent import create_logistics_agent
 
-__all__ = ["create_agent", "create_logistics_agent"]
+__all__ = ["create_logistics_agent"]
