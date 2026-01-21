@@ -3,12 +3,79 @@ from __future__ import annotations
 import os
 import json
 import logging
+import copy
 from contextlib import asynccontextmanager
-from typing import Optional
+from typing import Optional, Any
 from pathlib import Path
 
 import uvicorn
 from azure.identity.aio import DefaultAzureCredential as AsyncDefaultAzureCredential
+
+
+# ============================================================================
+# MONKEY-PATCH: Fix deepcopy issue in agent-framework (GitHub issue #3247)
+# ============================================================================
+# The agent-framework's AgentFrameworkEventBridge uses deepcopy on state dicts.
+# In Azure Container Apps with Managed Identity, the credential object contains
+# RLock objects that cannot be pickled/deepcopied. This patch replaces deepcopy
+# with a safe JSON round-trip for dict objects.
+# 
+# This can be removed once the upstream fix is released.
+# ============================================================================
+
+_original_deepcopy = copy.deepcopy
+
+
+def _safe_deepcopy(obj: Any, memo: dict | None = None) -> Any:
+    """Safe deepcopy that handles non-copyable objects like RLock.
+    
+    For dicts, uses JSON round-trip which is safer and handles most state objects.
+    For other types, falls back to original deepcopy with error handling.
+    """
+    if isinstance(obj, dict):
+        try:
+            # JSON round-trip is safe and handles most state dicts
+            return json.loads(json.dumps(obj, default=str))
+        except (TypeError, ValueError):
+            pass
+    
+    try:
+        return _original_deepcopy(obj, memo)
+    except TypeError as e:
+        if "RLock" in str(e) or "cannot pickle" in str(e):
+            # For unpicklable objects, try JSON fallback
+            if hasattr(obj, '__dict__'):
+                try:
+                    return json.loads(json.dumps(obj.__dict__, default=str))
+                except (TypeError, ValueError):
+                    pass
+            # Last resort: return empty dict for state-like objects
+            logging.getLogger(__name__).warning(
+                "deepcopy failed for %s, returning shallow copy: %s", 
+                type(obj).__name__, e
+            )
+            if isinstance(obj, dict):
+                return {}
+            return obj
+        raise
+
+
+# Patch the copy module's deepcopy
+copy.deepcopy = _safe_deepcopy
+
+# Also patch in the ag-ui events module directly
+try:
+    import agent_framework_ag_ui._events as _events_module
+    _events_module.deepcopy = _safe_deepcopy
+except (ImportError, AttributeError):
+    pass
+
+# Also patch in the ag-ui utils module  
+try:
+    import agent_framework_ag_ui._utils as _utils_module
+    _utils_module.copy.deepcopy = _safe_deepcopy
+except (ImportError, AttributeError):
+    pass
 from agent_framework._clients import ChatClientProtocol
 from agent_framework import azure as _azure
 from agent_framework_ag_ui import add_agent_framework_fastapi_endpoint
