@@ -1,98 +1,20 @@
 from __future__ import annotations
 
+# ============================================================================
+# IMPORTANT: Import patches FIRST before any other imports
+# This applies critical workarounds for pydantic and deepcopy issues.
+# See patches.py for details on the issues being fixed.
+# ============================================================================
+import patches  # noqa: F401 - side effects only
+
 import os
-import json
 import logging
-import copy
-import sys
 from contextlib import asynccontextmanager
 from typing import Optional, Any
 from pathlib import Path
 
 import uvicorn
 from azure.identity.aio import DefaultAzureCredential as AsyncDefaultAzureCredential
-
-
-# ============================================================================
-# WORKAROUND: Fix pydantic-core SchemaError with openai SDK (pydantic issue #12704)
-# ============================================================================
-# Pydantic 2.11+ has a bug where certain complex Union types with InstanceOf
-# validators cause a SchemaError during model class creation. This affects
-# the openai SDK's FinalRequestOptions.files field.
-#
-# The issue is tracked at: https://github.com/pydantic/pydantic/issues/12704
-# Fix PR (not yet merged): https://github.com/pydantic/pydantic/pull/12705
-#
-# Workaround: Modify openai._types.HttpxRequestFiles before the models are loaded.
-# We need to patch this BEFORE openai._models is imported.
-# ============================================================================
-
-# Import openai._types first and patch the problematic type
-import openai._types as _openai_types
-
-# Replace HttpxRequestFiles with Any to avoid pydantic schema generation errors
-# Original: HttpxRequestFiles = Union[Mapping[str, HttpxFileTypes], Sequence[Tuple[str, HttpxFileTypes]]]
-_openai_types.HttpxRequestFiles = Any  # type: ignore
-
-# Now import the rest of openai modules (they'll use our patched type)
-# Force reimport of _models if it was cached
-if 'openai._models' in sys.modules:
-    del sys.modules['openai._models']
-
-
-# ============================================================================
-# MONKEY-PATCH: Fix deepcopy issue in agent-framework (GitHub issue #3247)
-# ============================================================================
-# The agent-framework's AgentFrameworkEventBridge uses deepcopy on state dicts.
-# In Azure Container Apps with Managed Identity, the credential object contains
-# RLock objects that cannot be pickled/deepcopied. This patch replaces deepcopy
-# with a safe JSON round-trip for dict objects.
-# 
-# This can be removed once the upstream fix is released.
-# ============================================================================
-
-_original_deepcopy = copy.deepcopy
-
-
-def _safe_deepcopy(obj: Any, memo: dict | None = None) -> Any:
-    """Safe deepcopy wrapper that handles RLock errors from Azure credentials.
-    
-    This patches deepcopy globally but ONLY intervenes when an RLock error occurs.
-    Normal deepcopy behavior is preserved for all other cases.
-    """
-    try:
-        # Try normal deepcopy first - this preserves correct behavior for tools, responses, etc.
-        return _original_deepcopy(obj, memo)
-    except TypeError as e:
-        if "RLock" in str(e) or "cannot pickle" in str(e):
-            # Only for RLock errors: fall back to JSON-safe copy for dicts
-            if isinstance(obj, dict):
-                try:
-                    # For state dicts, JSON round-trip is safe
-                    return json.loads(json.dumps(obj, default=str))
-                except (TypeError, ValueError):
-                    # If JSON fails, do a shallow copy filtering out non-serializable values
-                    safe_dict = {}
-                    for k, v in obj.items():
-                        try:
-                            json.dumps(v, default=str)
-                            safe_dict[k] = v
-                        except (TypeError, ValueError):
-                            logging.getLogger(__name__).debug(
-                                "Skipping non-serializable key in deepcopy fallback: %s", k
-                            )
-                    return safe_dict
-            # For non-dict objects, return as-is
-            logging.getLogger(__name__).warning(
-                "deepcopy RLock error for %s, returning original", type(obj).__name__
-            )
-            return obj
-        # Re-raise non-RLock TypeErrors
-        raise
-
-
-# Patch copy.deepcopy globally to handle RLock errors
-copy.deepcopy = _safe_deepcopy
 from agent_framework._clients import ChatClientProtocol
 from agent_framework import azure as _azure
 from agent_framework_ag_ui import add_agent_framework_fastapi_endpoint

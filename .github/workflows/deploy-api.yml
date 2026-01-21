@@ -52,7 +52,7 @@ jobs:
               --name ${{ env.CONTAINER_APP_NAME }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
               --image ${{ env.REGISTRY }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
-              --set-env-vars AUTH_DISABLED=${{ vars.AUTH_DISABLED || 'false' }}
+              --set-env-vars AUTH_DISABLED=${{ vars.AUTH_DISABLED || 'true' }}
 
       - name: Verify deployment
         uses: azure/cli@v2
