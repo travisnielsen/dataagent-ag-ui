@@ -54,55 +54,36 @@ if 'openai._models' in sys.modules:
 _original_deepcopy = copy.deepcopy
 
 
-def _safe_deepcopy(obj: Any, memo: dict | None = None) -> Any:
-    """Safe deepcopy that handles non-copyable objects like RLock.
+def _safe_state_deepcopy(obj: Any, memo: dict | None = None) -> Any:
+    """Safe deepcopy for state objects that may contain non-copyable objects like RLock.
     
-    For state-like dicts (containing only JSON-serializable primitives),
-    uses JSON round-trip which is safer. For dicts containing complex objects
-    like AIFunction tools, uses original deepcopy.
+    This is specifically for AG-UI state dicts which should only contain
+    JSON-serializable data. We use JSON round-trip for safety.
     """
-    # Only use JSON round-trip for simple state dicts, not dicts with complex objects
-    # Check if dict values are all JSON-compatible primitives
     if isinstance(obj, dict):
-        def _is_simple_json_value(v: Any) -> bool:
-            """Check if a value is a simple JSON-serializable type."""
-            if v is None:
-                return True
-            if isinstance(v, (bool, int, float, str)):
-                return True
-            if isinstance(v, (list, tuple)):
-                return all(_is_simple_json_value(item) for item in v)
-            if isinstance(v, dict):
-                return all(isinstance(k, str) and _is_simple_json_value(val) for k, val in v.items())
-            return False
-        
-        # Only use JSON round-trip for simple dicts (state dicts)
-        if all(_is_simple_json_value(v) for v in obj.values()):
-            try:
-                return json.loads(json.dumps(obj))
-            except (TypeError, ValueError):
-                pass
+        try:
+            # State dicts should be JSON-serializable
+            return json.loads(json.dumps(obj, default=str))
+        except (TypeError, ValueError):
+            pass
     
     try:
         return _original_deepcopy(obj, memo)
     except TypeError as e:
         if "RLock" in str(e) or "cannot pickle" in str(e):
-            # For unpicklable objects, try JSON fallback only for simple values
             if isinstance(obj, dict):
-                try:
-                    # Use a custom encoder that skips non-serializable values
-                    safe_dict = {}
-                    for k, v in obj.items():
-                        try:
-                            json.dumps(v)  # Test if serializable
-                            safe_dict[k] = v
-                        except (TypeError, ValueError):
-                            # Skip non-serializable values (like credentials)
-                            pass
-                    return safe_dict
-                except (TypeError, ValueError):
-                    pass
-            # Last resort: return the object as-is
+                # For state dicts with RLock, filter out non-serializable values
+                safe_dict = {}
+                for k, v in obj.items():
+                    try:
+                        json.dumps(v)
+                        safe_dict[k] = v
+                    except (TypeError, ValueError):
+                        # Skip non-serializable values (like credentials)
+                        logging.getLogger(__name__).debug(
+                            "Skipping non-serializable state key: %s", k
+                        )
+                return safe_dict
             logging.getLogger(__name__).warning(
                 "deepcopy failed for %s, returning original: %s", 
                 type(obj).__name__, e
@@ -111,20 +92,27 @@ def _safe_deepcopy(obj: Any, memo: dict | None = None) -> Any:
         raise
 
 
-# Patch the copy module's deepcopy
-copy.deepcopy = _safe_deepcopy
+# DO NOT patch copy.deepcopy globally - it breaks tool call handling
+# Instead, only patch the specific modules that need it for state management
 
-# Also patch in the ag-ui events module directly
+# Patch only the ag-ui events module (for state snapshots)
 try:
     import agent_framework_ag_ui._events as _events_module
-    _events_module.deepcopy = _safe_deepcopy
+    _events_module.deepcopy = _safe_state_deepcopy
 except (ImportError, AttributeError):
     pass
 
-# Also patch in the ag-ui utils module  
+# Patch only the ag-ui utils module (for state merging)
 try:
     import agent_framework_ag_ui._utils as _utils_module
-    _utils_module.copy.deepcopy = _safe_deepcopy
+    _utils_module.copy.deepcopy = _safe_state_deepcopy
+except (ImportError, AttributeError):
+    pass
+
+# Patch only the ag-ui endpoint module (for state copying)
+try:
+    import agent_framework_ag_ui._endpoint as _endpoint_module
+    _endpoint_module.copy.deepcopy = _safe_state_deepcopy
 except (ImportError, AttributeError):
     pass
 from agent_framework._clients import ChatClientProtocol
