@@ -4,12 +4,40 @@ import os
 import json
 import logging
 import copy
+import sys
 from contextlib import asynccontextmanager
 from typing import Optional, Any
 from pathlib import Path
 
 import uvicorn
 from azure.identity.aio import DefaultAzureCredential as AsyncDefaultAzureCredential
+
+
+# ============================================================================
+# WORKAROUND: Fix pydantic-core SchemaError with openai SDK (pydantic issue #12704)
+# ============================================================================
+# Pydantic 2.11+ has a bug where certain complex Union types with InstanceOf
+# validators cause a SchemaError during model class creation. This affects
+# the openai SDK's FinalRequestOptions.files field.
+#
+# The issue is tracked at: https://github.com/pydantic/pydantic/issues/12704
+# Fix PR (not yet merged): https://github.com/pydantic/pydantic/pull/12705
+#
+# Workaround: Modify openai._types.HttpxRequestFiles before the models are loaded.
+# We need to patch this BEFORE openai._models is imported.
+# ============================================================================
+
+# Import openai._types first and patch the problematic type
+import openai._types as _openai_types
+
+# Replace HttpxRequestFiles with Any to avoid pydantic schema generation errors
+# Original: HttpxRequestFiles = Union[Mapping[str, HttpxFileTypes], Sequence[Tuple[str, HttpxFileTypes]]]
+_openai_types.HttpxRequestFiles = Any  # type: ignore
+
+# Now import the rest of openai modules (they'll use our patched type)
+# Force reimport of _models if it was cached
+if 'openai._models' in sys.modules:
+    del sys.modules['openai._models']
 
 
 # ============================================================================
