@@ -57,33 +57,56 @@ _original_deepcopy = copy.deepcopy
 def _safe_deepcopy(obj: Any, memo: dict | None = None) -> Any:
     """Safe deepcopy that handles non-copyable objects like RLock.
     
-    For dicts, uses JSON round-trip which is safer and handles most state objects.
-    For other types, falls back to original deepcopy with error handling.
+    For state-like dicts (containing only JSON-serializable primitives),
+    uses JSON round-trip which is safer. For dicts containing complex objects
+    like AIFunction tools, uses original deepcopy.
     """
+    # Only use JSON round-trip for simple state dicts, not dicts with complex objects
+    # Check if dict values are all JSON-compatible primitives
     if isinstance(obj, dict):
-        try:
-            # JSON round-trip is safe and handles most state dicts
-            return json.loads(json.dumps(obj, default=str))
-        except (TypeError, ValueError):
-            pass
+        def _is_simple_json_value(v: Any) -> bool:
+            """Check if a value is a simple JSON-serializable type."""
+            if v is None:
+                return True
+            if isinstance(v, (bool, int, float, str)):
+                return True
+            if isinstance(v, (list, tuple)):
+                return all(_is_simple_json_value(item) for item in v)
+            if isinstance(v, dict):
+                return all(isinstance(k, str) and _is_simple_json_value(val) for k, val in v.items())
+            return False
+        
+        # Only use JSON round-trip for simple dicts (state dicts)
+        if all(_is_simple_json_value(v) for v in obj.values()):
+            try:
+                return json.loads(json.dumps(obj))
+            except (TypeError, ValueError):
+                pass
     
     try:
         return _original_deepcopy(obj, memo)
     except TypeError as e:
         if "RLock" in str(e) or "cannot pickle" in str(e):
-            # For unpicklable objects, try JSON fallback
-            if hasattr(obj, '__dict__'):
+            # For unpicklable objects, try JSON fallback only for simple values
+            if isinstance(obj, dict):
                 try:
-                    return json.loads(json.dumps(obj.__dict__, default=str))
+                    # Use a custom encoder that skips non-serializable values
+                    safe_dict = {}
+                    for k, v in obj.items():
+                        try:
+                            json.dumps(v)  # Test if serializable
+                            safe_dict[k] = v
+                        except (TypeError, ValueError):
+                            # Skip non-serializable values (like credentials)
+                            pass
+                    return safe_dict
                 except (TypeError, ValueError):
                     pass
-            # Last resort: return empty dict for state-like objects
+            # Last resort: return the object as-is
             logging.getLogger(__name__).warning(
-                "deepcopy failed for %s, returning shallow copy: %s", 
+                "deepcopy failed for %s, returning original: %s", 
                 type(obj).__name__, e
             )
-            if isinstance(obj, dict):
-                return {}
             return obj
         raise
 
