@@ -23,10 +23,14 @@ dependencies = [
     { name = "agent-framework-azure-ai" },
     { name = "agent-framework-core" },
     { name = "azure-ai-projects" },
+    { name = "azure-identity" },
     { name = "azure-monitor-opentelemetry" },
+    { name = "fastapi" },
     { name = "fastapi-azure-auth" },
     { name = "opentelemetry-instrumentation-fastapi" },
+    { name = "pydantic" },
     { name = "python-dotenv" },
+    { name = "uvicorn" },
 ]
 
 [package.metadata]
@@ -35,10 +39,14 @@ requires-dist = [
     { name = "agent-framework-azure-ai", specifier = ">=1.0.0b260116" },
     { name = "agent-framework-core", specifier = ">=1.0.0b260116" },
     { name = "azure-ai-projects", specifier = ">=2.0.0b3" },
+    { name = "azure-identity", specifier = ">=1.15.0" },
     { name = "azure-monitor-opentelemetry", specifier = ">=1.6.0" },
+    { name = "fastapi", specifier = ">=0.110.0" },
     { name = "fastapi-azure-auth", specifier = ">=5.0.0" },
     { name = "opentelemetry-instrumentation-fastapi", specifier = ">=0.48b0" },
+    { name = "pydantic", specifier = ">=2.0.0" },
     { name = "python-dotenv" },
+    { name = "uvicorn", specifier = ">=0.27.0" },
 ]
 
 [[package]]

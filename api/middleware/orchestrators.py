@@ -9,8 +9,28 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import Any
 
 from agent_framework_ag_ui._orchestrators import DefaultOrchestrator, Orchestrator, ExecutionContext
+
+
+def sanitize_state(state: dict[str, Any] | None) -> dict[str, Any]:
+    """Ensure state is JSON-serializable to avoid deepcopy issues with RLock objects.
+    
+    The agent-framework uses deepcopy on state which fails if state contains
+    objects with threading locks (like Azure credentials). This function
+    round-trips through JSON to ensure only serializable data is in state.
+    """
+    if not state:
+        return {}
+    try:
+        # Round-trip through JSON to ensure serializability
+        return json.loads(json.dumps(state, default=str))
+    except (TypeError, ValueError) as e:
+        logging.getLogger(__name__).warning(
+            "Failed to sanitize state, returning empty dict: %s", e
+        )
+        return {}
 from agent_framework._types import FunctionCallContent, FunctionResultContent
 from ag_ui.core import (
     RunStartedEvent, RunFinishedEvent, MessagesSnapshotEvent,
@@ -344,6 +364,13 @@ class DeduplicatingOrchestrator(Orchestrator):
     
     async def run(self, context: ExecutionContext):
         """Run the inner orchestrator and filter duplicate tool call events."""
+        # CRITICAL: Sanitize state in input_data BEFORE passing to inner orchestrator.
+        # The agent-framework uses deepcopy on state which fails if state contains
+        # objects with threading locks (like Azure credentials). Sanitizing here
+        # ensures the inner DefaultOrchestrator receives only JSON-serializable data.
+        if "state" in context.input_data:
+            context.input_data["state"] = sanitize_state(context.input_data.get("state"))
+        
         # Get shared state from responses_api module
         thread_response_store = get_thread_response_store()
         current_agui_thread_id = get_current_agui_thread_id()
@@ -373,7 +400,7 @@ class DeduplicatingOrchestrator(Orchestrator):
                 # Emit minimal events to complete the AG-UI protocol properly
                 yield RunStartedEvent(thread_id=agui_thread_id, run_id="frontend-action-complete")
                 # Preserve the current state from the incoming request
-                incoming_state = context.input_data.get("state", {})
+                incoming_state = sanitize_state(context.input_data.get("state", {}))
                 if incoming_state:
                     yield StateSnapshotEvent(snapshot=incoming_state)
                 yield RunFinishedEvent(thread_id=agui_thread_id, run_id="frontend-action-complete")
@@ -418,7 +445,7 @@ class DeduplicatingOrchestrator(Orchestrator):
             # This preserves frontend-only fields like activeFilter and selectedRoute
             # that should not be overwritten by the agent's state
             frontend_state: dict = {}
-            incoming_state = context.input_data.get("state", {})
+            incoming_state = sanitize_state(context.input_data.get("state", {}))
             logger.info("[DeduplicatingOrchestrator] Incoming state keys: %s", list(incoming_state.keys()) if incoming_state else "None")
             if incoming_state:
                 active_filter_in_state = incoming_state.get("activeFilter")
