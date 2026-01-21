@@ -54,67 +54,45 @@ if 'openai._models' in sys.modules:
 _original_deepcopy = copy.deepcopy
 
 
-def _safe_state_deepcopy(obj: Any, memo: dict | None = None) -> Any:
-    """Safe deepcopy for state objects that may contain non-copyable objects like RLock.
+def _safe_deepcopy(obj: Any, memo: dict | None = None) -> Any:
+    """Safe deepcopy wrapper that handles RLock errors from Azure credentials.
     
-    This is specifically for AG-UI state dicts which should only contain
-    JSON-serializable data. We use JSON round-trip for safety.
+    This patches deepcopy globally but ONLY intervenes when an RLock error occurs.
+    Normal deepcopy behavior is preserved for all other cases.
     """
-    if isinstance(obj, dict):
-        try:
-            # State dicts should be JSON-serializable
-            return json.loads(json.dumps(obj, default=str))
-        except (TypeError, ValueError):
-            pass
-    
     try:
+        # Try normal deepcopy first - this preserves correct behavior for tools, responses, etc.
         return _original_deepcopy(obj, memo)
     except TypeError as e:
         if "RLock" in str(e) or "cannot pickle" in str(e):
+            # Only for RLock errors: fall back to JSON-safe copy for dicts
             if isinstance(obj, dict):
-                # For state dicts with RLock, filter out non-serializable values
-                safe_dict = {}
-                for k, v in obj.items():
-                    try:
-                        json.dumps(v)
-                        safe_dict[k] = v
-                    except (TypeError, ValueError):
-                        # Skip non-serializable values (like credentials)
-                        logging.getLogger(__name__).debug(
-                            "Skipping non-serializable state key: %s", k
-                        )
-                return safe_dict
+                try:
+                    # For state dicts, JSON round-trip is safe
+                    return json.loads(json.dumps(obj, default=str))
+                except (TypeError, ValueError):
+                    # If JSON fails, do a shallow copy filtering out non-serializable values
+                    safe_dict = {}
+                    for k, v in obj.items():
+                        try:
+                            json.dumps(v, default=str)
+                            safe_dict[k] = v
+                        except (TypeError, ValueError):
+                            logging.getLogger(__name__).debug(
+                                "Skipping non-serializable key in deepcopy fallback: %s", k
+                            )
+                    return safe_dict
+            # For non-dict objects, return as-is
             logging.getLogger(__name__).warning(
-                "deepcopy failed for %s, returning original: %s", 
-                type(obj).__name__, e
+                "deepcopy RLock error for %s, returning original", type(obj).__name__
             )
             return obj
+        # Re-raise non-RLock TypeErrors
         raise
 
 
-# DO NOT patch copy.deepcopy globally - it breaks tool call handling
-# Instead, only patch the specific modules that need it for state management
-
-# Patch only the ag-ui events module (for state snapshots)
-try:
-    import agent_framework_ag_ui._events as _events_module
-    _events_module.deepcopy = _safe_state_deepcopy
-except (ImportError, AttributeError):
-    pass
-
-# Patch only the ag-ui utils module (for state merging)
-try:
-    import agent_framework_ag_ui._utils as _utils_module
-    _utils_module.copy.deepcopy = _safe_state_deepcopy
-except (ImportError, AttributeError):
-    pass
-
-# Patch only the ag-ui endpoint module (for state copying)
-try:
-    import agent_framework_ag_ui._endpoint as _endpoint_module
-    _endpoint_module.copy.deepcopy = _safe_state_deepcopy
-except (ImportError, AttributeError):
-    pass
+# Patch copy.deepcopy globally to handle RLock errors
+copy.deepcopy = _safe_deepcopy
 from agent_framework._clients import ChatClientProtocol
 from agent_framework import azure as _azure
 from agent_framework_ag_ui import add_agent_framework_fastapi_endpoint
